@@ -1,1 +1,1 @@
-from .callbacks import CallBack, EarlyStopping, LRDecaying, SaveCheckpoint, SaveSampleBase
+from .callbacks import Callback, EarlyStopping, LRDecaying, SaveCheckpoint, SaveSampleBase

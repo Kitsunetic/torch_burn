@@ -9,7 +9,7 @@ from torch.optim.optimizer import Optimizer
 from torch_burn.metrics import Metric
 
 
-class CallBack:
+class Callback:
     def __init__(self):
         pass
 
@@ -26,7 +26,7 @@ class CallBack:
         pass
 
 
-class MetricImprovingCallback(CallBack):
+class MetricImprovingCallback(Callback):
     def __init__(self, monitor: Metric):
         super(MetricImprovingCallback, self).__init__()
 
@@ -102,7 +102,7 @@ class SaveCheckpoint(MetricImprovingCallback):
             torch.save(data, filepath)
 
 
-class SaveSampleBase(CallBack):
+class SaveSampleBase(Callback):
     """
     Save one sample per a epoch
     Must be specified how to save sample data through `save_data` overriding function.
