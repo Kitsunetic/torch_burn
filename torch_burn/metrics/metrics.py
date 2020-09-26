@@ -15,7 +15,7 @@ class Metric:
 
 
 class ModuleMetric(Metric):
-    def __init__(self, name: str, module: nn.Module, mode='min'):
+    def __init__(self, module: nn.Module, name: str, mode='min'):
         super(ModuleMetric, self).__init__(name, mode)
         self.module = module
 
