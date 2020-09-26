@@ -19,12 +19,6 @@ class Callback:
     def on_epoch_end(self, is_train: bool, epoch: int, logs: dict):
         pass
 
-    def on_batch_begin(self, is_train: bool, epoch: int, logs: dict, inputs: torch.tensor):
-        pass
-
-    def on_batch_end(self, is_train: bool, epoch: int, logs: dict, inputs: torch.tensor, outputs: torch.tensor):
-        pass
-
 
 class MetricImprovingCallback(Callback):
     def __init__(self, monitor: Metric):
