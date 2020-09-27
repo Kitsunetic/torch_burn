@@ -105,14 +105,27 @@ class Trainer:
         """Specify preprocessing pipeline only for validation"""
         return self.preprocessing(data, map_location=map_location)
 
-    def train(self):
+    def __call__(self):
         for epoch in range(self.start_epoch, self.num_epochs):
-            pass
+            # train epoch begin
+            with torch.no_grad():
+                for callback in self.callbacks:
+                    callback.on_epoch_begin(True, epoch, self.logs)
+            self.model.train()
+            self._train_loop(epoch)
+            for callback in self.callbacks:
+                callback.on_epoch_end(True, epoch, self.logs)
+
+            # validation
+            for callback in self.callbacks:
+                callback.on_epoch_begin(False, epoch, self.logs)
+            with torch.no_grad():
+                self.model.eval()
+                self._valid_loop(epoch)
+            for callback in self.callbacks:
+                callback.on_epoch_end(False, epoch, self.logs)
 
     def _train_loop(self, epoch: int):
-        for callback in self.callbacks:
-            callback.on_epoch_begin(True, epoch, self.logs)
-
         losses = []
         desc = self.desc.format(epoch=epoch, num_epochs=self.num_epochs) + ' Train'
         with tqdm(total=len(self.train_dl), ncols=self.ncols, desc=desc) as t:
@@ -142,37 +155,26 @@ class Trainer:
                 t.update()
         time.sleep(0.001)  # for tqdm timing problem
 
-        for callback in self.callbacks:
-            callback.on_epoch_end(True, epoch, self.logs)
-
     def _valid_loop(self, epoch: int):
-        with torch.no_grad():
-            self.model.eval()
-            for callback in self.callbacks:
-                callback.on_epoch_begin(True, epoch, self.logs)
+        losses = []
+        desc = self.desc.format(epoch=epoch, num_epochs=self.num_epochs) + ' Train'
+        with tqdm(total=len(self.train_dl), ncols=self.ncols, desc=desc) as t:
+            for data in self.train_dl:
+                data = self.train_preprocessing(data)
+                output, target = self.forward(data)
 
-            losses = []
-            desc = self.desc.format(epoch=epoch, num_epochs=self.num_epochs) + ' Train'
-            with tqdm(total=len(self.train_dl), ncols=self.ncols, desc=desc) as t:
-                for data in self.train_dl:
-                    data = self.train_preprocessing(data)
-                    output, target = self.forward(data)
+                loss = self.metrics[0](output, target)
+                for metric in self.metrics:
+                    diff = metric(output, target)
+                    self.logs['val_' + metric.name].append(diff.item())
 
-                    loss = self.metrics[0](output, target)
-                    for metric in self.metrics:
-                        diff = metric(output, target)
-                        self.logs['val_' + metric.name].append(diff.item())
-
-                    losses.append(loss.item())
-                    mean_loss = sum(losses) / len(loss)
-                    msg = f'val_loss{mean_loss:.4f}'
-                    for metric in self.metrics[1:]:
-                        metric_name = 'val_' + metric.name
-                        mean_diff = sum(self.logs[metric_name]) / len(self.logs[metric_name])
-                        msg += f' val_{metric.name}{mean_diff:.4f}'
-                    t.set_postfix_str(msg, refresh=False)
-                    t.update()
-            time.sleep(0.001)  # for tqdm timing problem
-
-            for callback in self.callbacks:
-                callback.on_epoch_end(True, epoch, self.logs)
+                losses.append(loss.item())
+                mean_loss = sum(losses) / len(loss)
+                msg = f'val_loss{mean_loss:.4f}'
+                for metric in self.metrics[1:]:
+                    metric_name = 'val_' + metric.name
+                    mean_diff = sum(self.logs[metric_name]) / len(self.logs[metric_name])
+                    msg += f' val_{metric.name}{mean_diff:.4f}'
+                t.set_postfix_str(msg, refresh=False)
+                t.update()
+        time.sleep(0.001)  # for tqdm timing problem
