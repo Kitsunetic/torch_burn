@@ -21,7 +21,7 @@ class Trainer:
                  callbacks: Union[Callback, Iterable[Callback]] = None,
                  verbose: bool = True,
                  desc: str = '[{epoch:04d}/{num_epochs:04d}]',
-                 ncols: int = 100,
+                 ncols: int = None,
                  data_parallel: bool = False):
         """
 
@@ -103,7 +103,7 @@ class Trainer:
             for callback in self.callbacks:
                 callback.on_epoch_begin(True, epoch, self.logs)
             self.model.train()
-            self.loop(True, train_dl, tqdm_desc=desc_base + ' Train')
+            self.loop(True, epoch, train_dl, tqdm_desc=desc_base + ' Train')
             for callback in self.callbacks:
                 callback.on_epoch_end(True, epoch, self.logs)
 
@@ -113,14 +113,19 @@ class Trainer:
                     callback.on_epoch_begin(False, epoch, self.logs)
                 with torch.no_grad():
                     self.model.eval()
-                    self.loop(False, valid_dl, tqdm_desc=desc_base + ' Validation')
+                    self.loop(False, epoch, valid_dl, tqdm_desc=desc_base + ' Validation')
                 for callback in self.callbacks:
                     callback.on_epoch_end(False, epoch, self.logs)
 
-    def loop(self, is_train: bool, dl: DataLoader, tqdm_desc: str = ''):
-        self._init_logs()
+    def loop(self, is_train: bool, epoch: int, dl: DataLoader, tqdm_desc: str = ''):
+        self._init_logs()  # TODO
+        losses = {('' if is_train else 'val_') + metric.name: 0 for metric in self.metrics}
+
         with tqdm(total=len(dl), ncols=self.ncols, desc=tqdm_desc) as t:
             for i, data in enumerate(dl):
+                for callback in self.callbacks:
+                    callback.on_batch_begin(is_train, epoch)
+
                 if not isinstance(data, Iterable) or isinstance(data, torch.Tensor):
                     data = (data,)
 
@@ -150,13 +155,16 @@ class Trainer:
 
                 # calculate metrics
                 name = ('val_' if not is_train else '') + 'loss'
+                losses[name] = loss.item()
                 self.logs[name] = _ignition_mean(self.logs[name], loss.item(), i)
 
+                pred, target = out[0].detach(), out[1].detach()
                 with torch.no_grad():
                     self.model.eval()
                     for metric in self.metrics[1:]:
                         name = ('val_' if not is_train else '') + metric.name
-                        value = metric(*out[:2])
+                        value = metric(pred, target)
+                        losses[name] = value.item()
                         self.logs[name] = _ignition_mean(self.logs[name], value.item(), i)
 
                 # update progressbar
@@ -168,6 +176,9 @@ class Trainer:
                 msg = ' '.join(msgs)
                 t.set_postfix_str(msg, refresh=False)
                 t.update()
+
+                for callback in self.callbacks:
+                    callback.on_batch_end(is_train, epoch, losses)
 
         time.sleep(0.001)  # for tqdm timing problem
 

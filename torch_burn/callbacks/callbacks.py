@@ -5,15 +5,22 @@ from typing import AnyStr
 import torch
 import torch.nn as nn
 from torch.optim.optimizer import Optimizer
+from torch.utils.tensorboard import SummaryWriter
 
 from torch_burn.metrics import Metric
 
 
 class Callback:
-    def on_epoch_begin(self, is_train: bool, epoch: int, logs: dict):
+    def on_epoch_begin(self, is_train: bool, epoch: int, logs: dict):  # TODO logs 지우기
         pass
 
     def on_epoch_end(self, is_train: bool, epoch: int, logs: dict):
+        pass
+
+    def on_batch_begin(self, is_train: bool, epoch: int):
+        pass
+
+    def on_batch_end(self, is_train: bool, epoch: int, losses: dict):
         pass
 
 
@@ -185,12 +192,11 @@ class LRDecaying(MetricImprovingCallback):
 
 
 class Tensorboard(Callback):
-    def __init__(self, logdir: AnyStr, model: nn.Module = None):
-        self.logdir = Path(logdir)
-        self.model = model
+    def __init__(self, logdir: AnyStr, model: nn.Module = None, input_shape=None, comment: str = ''):
+        self.writer = SummaryWriter(logdir, comment=comment)
+        if model is not None and input_shape is not None:
+            self.writer.add_graph(model, input_shape)
 
-        self.logdir.mkdir(parents=True, exist_ok=True)
-
-    def on_epoch_end(self, is_train: bool, epoch: int, logs: dict):
-        # TODO
-        pass
+    def on_batch_end(self, is_train: bool, epoch: int, losses: dict):
+        for k, v in losses.items():
+            self.writer.add_scalar(k, v, epoch)
