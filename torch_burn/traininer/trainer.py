@@ -1,6 +1,7 @@
+import math
 import time
 from multiprocessing import cpu_count
-from typing import Dict, Iterable, List, Tuple, Union
+from typing import Iterable, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -16,165 +17,163 @@ class Trainer:
     def __init__(self,
                  model: nn.Module,
                  optim: Union[Optimizer, Iterable[Optimizer]],
-                 metrics: Iterable[Metric],
-                 callbacks: Iterable[Callback] = None,
-                 train_dataset: Dataset = None,
-                 valid_dataset: Dataset = None,
-                 batch_size: int = 1,
-                 num_epochs: int = 1,
-                 start_epoch: int = 1,
-                 train_valid_split: float = None,
-                 shuffle: bool = False,
-                 cpus: int = cpu_count(),
-                 drop_last: bool = False,
+                 metrics: Union[Metric, Iterable[Metric]],
+                 callbacks: Union[Callback, Iterable[Callback]] = None,
                  verbose: bool = True,
                  desc: str = '[{epoch:04d}/{num_epochs:04d}]',
                  ncols: int = 100,
                  data_parallel: bool = False):
+        """
+
+        :param model: a pytorch model
+        :param optim: one or more optimizers
+        :param metrics: one or more metrics, the first metrics will be loss
+        :param callbacks: one or more callbacks
+        :param verbose: show progressbar or not
+        :param desc: progressbar description with parameters 'epoch', 'num_epochs'
+        :param ncols: width of the progressbar
+        :param data_parallel: use data_parallel
+        """
         self.model = model
         self.optim = list(optim) if isinstance(optim, Iterable) else [optim]
-        self.metrics = list(metrics)
-        self.callbacks = list(callbacks)
-        self.num_epochs = num_epochs
-        self.start_epoch = start_epoch
+        self.metrics = list(metrics) if isinstance(metrics, Iterable) else [metrics]
+        self.callbacks = list(callbacks) if isinstance(callbacks, Iterable) else [callbacks]
         self.verbose = verbose
         self.desc = desc
         self.ncols = ncols
         self.data_parallel = data_parallel
 
+        self.metrics[0].name = 'loss'
+        self.logs = None
+        self._init_logs()
+
         # set devices
         self._device = next(iter(model.parameters()))[0].device
-        self.logs: Dict[str, List] = {metric.name: [] for metric in self.metrics}
-        self.logs.update({'val_' + metric.name: [] for metric in self.metrics})
 
         # data parallel
         if self.data_parallel:
             self.model = nn.DataParallel(model)
 
-        # make dataset
-        assert valid_dataset is None or train_valid_split is None
-        if valid_dataset is not None:
-            self.train_dataset = train_dataset
-            self.valid_dataset = valid_dataset
-        elif train_valid_split is not None:
-            assert 0 < train_valid_split < 1
-
-            dssize = len(train_dataset)
-            valid_size = int(dssize * train_valid_split)
-            train_size = dssize - valid_size
-            self.train_dataset, self.valid_dataset = random_split(train_dataset, (train_size, valid_size))
-        else:
-            self.train_dataset = train_dataset
-            self.valid_dataset = None
-
-        self.train_dl = DataLoader(self.train_dataset, batch_size=batch_size, shuffle=shuffle,
-                                   num_workers=cpus, drop_last=drop_last)
-        self.valid_dl = None
-        if self.valid_dataset is not None:
-            self.valid_dl = DataLoader(self.train_dataset, batch_size=batch_size,
-                                       num_workers=cpus, drop_last=drop_last)
-
-    def forward(self, data) -> Tuple[torch.Tensor, torch.Tensor]:
-        x, y = data
+    def forward(self, x, y):
         return self.model(x), y
 
-    def preprocessing(self, data, map_location: torch.device = None):
-        """Preprocessing input data for both train and validation"""
-        if map_location is None:
-            map_location = self._device
+    def _init_logs(self):
+        self.logs = {metric.name: (math.inf if metric.mode == 'min' else -math.inf) for metric in self.metrics}
+        self.logs.update({'val_' + k: v for k, v in self.logs.items()})
 
-        if isinstance(data, torch.Tensor):
-            data = data.to(map_location)
-            return data
-        elif isinstance(data, Iterable):
-            new_data = []
-            for d in data:
-                if isinstance(d, torch.Tensor):
-                    new_data.append(d.to(map_location))
-                else:
-                    new_data.append(d)
-            return new_data
+    def fit(self,
+            train_dataset: Dataset,
+            valid_dataset: Dataset = None,
+            train_valid_split: float = None,
+            num_epochs: int = 1,
+            start_epoch: int = 1,
+            batch_size=32,
+            shuffle=True,
+            num_workers=cpu_count(),
+            drop_last=False):
+
+        # make dataset
+        assert valid_dataset is None or train_valid_split is None
+
+        if valid_dataset is None and train_valid_split is not None:
+            assert 0 < train_valid_split < 1
+
+            dataset_size = len(train_dataset)
+            valid_size = int(dataset_size * train_valid_split)
+            train_size = dataset_size - valid_size
+            train_dataset, valid_dataset = random_split(train_dataset, (train_size, valid_size))
+
+        train_dl = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle,
+                              num_workers=num_workers, drop_last=drop_last)
+        if valid_dataset is not None:
+            valid_dl = DataLoader(valid_dataset, batch_size=batch_size,
+                                  num_workers=num_workers, drop_last=drop_last)
         else:
-            return data
+            valid_dl = None
 
-    def train_preprocessing(self, data, map_location: torch.device = None):
-        """Specify preprocessing pipeline only for train"""
-        return self.preprocessing(data, map_location=map_location)
+        logs = {metric.name: math.inf if metric.mode == 'min' else -math.inf for metric in self.metrics}
+        if valid_dl is not None:
+            logs.update(
+                {'val_' + metric.name: math.inf if metric.mode == 'min' else -math.inf for metric in self.metrics})
 
-    def valid_preprocessing(self, data, map_location: torch.device = None):
-        """Specify preprocessing pipeline only for validation"""
-        return self.preprocessing(data, map_location=map_location)
+        for epoch in range(start_epoch, num_epochs):
+            desc_base = self.desc.format(epoch=epoch, num_epochs=num_epochs)
 
-    def __call__(self):
-        for epoch in range(self.start_epoch, self.num_epochs):
-            # train epoch begin
-            with torch.no_grad():
-                for callback in self.callbacks:
-                    callback.on_epoch_begin(True, epoch, self.logs)
+            # train
+            for callback in self.callbacks:
+                callback.on_epoch_begin(True, epoch, self.logs)
             self.model.train()
-            self._train_loop(epoch)
+            self.loop(True, train_dl, tqdm_desc=desc_base + ' Train')
             for callback in self.callbacks:
                 callback.on_epoch_end(True, epoch, self.logs)
 
             # validation
-            for callback in self.callbacks:
-                callback.on_epoch_begin(False, epoch, self.logs)
-            with torch.no_grad():
-                self.model.eval()
-                self._valid_loop(epoch)
-            for callback in self.callbacks:
-                callback.on_epoch_end(False, epoch, self.logs)
+            if valid_dl is not None:
+                for callback in self.callbacks:
+                    callback.on_epoch_begin(False, epoch, self.logs)
+                with torch.no_grad():
+                    self.model.eval()
+                    self.loop(False, valid_dl, tqdm_desc=desc_base + ' Validation')
+                for callback in self.callbacks:
+                    callback.on_epoch_end(False, epoch, self.logs)
 
-    def _train_loop(self, epoch: int):
-        losses = []
-        desc = self.desc.format(epoch=epoch, num_epochs=self.num_epochs) + ' Train'
-        with tqdm(total=len(self.train_dl), ncols=self.ncols, desc=desc) as t:
-            for data in self.train_dl:
-                data = self.train_preprocessing(data)
+    def loop(self, is_train: bool, dl: DataLoader, tqdm_desc: str = ''):
+        self._init_logs()
+        with tqdm(total=len(dl), ncols=self.ncols, desc=tqdm_desc) as t:
+            for i, data in enumerate(dl):
+                if not isinstance(data, Iterable) or isinstance(data, torch.Tensor):
+                    data = (data,)
 
-                self.model.train()
-                output, target = self.forward(data)
+                # match device with model
+                new_data = []
+                for d in data:
+                    if isinstance(d, torch.Tensor):
+                        new_data.append(d.to(self._device))
+                    else:
+                        new_data.append(d)
+                data = new_data
 
-                loss = self.metrics[0](output, target)
+                # forward
+                out = self.forward(*data)
+                assert isinstance(out, Tuple) and len(out) >= 2, \
+                    f'output of forward must be Tuple whose length larger than 2'
+
+                # backward
+                metric = self.metrics[0]
+                loss = metric(*out[:2])
+                if is_train:
+                    for optim in self.optim:
+                        optim.zero_grad()
+                    loss.backward()
+                    for optim in self.optim:
+                        optim.step()
+
+                # calculate metrics
+                name = ('val_' if not is_train else '') + 'loss'
+                self.logs[name] = _ignition_mean(self.logs[name], loss.item(), i)
+
+                with torch.no_grad():
+                    self.model.eval()
+                    for metric in self.metrics[1:]:
+                        name = ('val_' if not is_train else '') + metric.name
+                        value = metric(*out[:2])
+                        self.logs[name] = _ignition_mean(self.logs[name], value.item(), i)
+
+                # update progressbar
+                msgs = []
                 for metric in self.metrics:
-                    diff = metric(output, target)
-                    self.logs[metric.name].append(diff.item())
-                for optim in self.optim:
-                    optim.zero_grad()
-                loss.backwar()
-                for optim in self.optim:
-                    optim.step()
-
-                losses.append(loss.item())
-                mean_loss = sum(losses[-100:]) / len(loss[-100:])
-                msg = f'loss{mean_loss:.4f}'
-                for metric in self.metrics[1:]:
-                    mean_diff = sum(self.logs[metric.name][-100:]) / len(self.logs[metric.name][-100:])
-                    msg += f' {metric.name}{mean_diff:.4f}'
+                    name = ('val_' if not is_train else '') + metric.name
+                    msg = f'{name} {self.logs[name]:.4f}'
+                    msgs.append(msg)
+                msg = ' '.join(msgs)
                 t.set_postfix_str(msg, refresh=False)
                 t.update()
+
         time.sleep(0.001)  # for tqdm timing problem
 
-    def _valid_loop(self, epoch: int):
-        losses = []
-        desc = self.desc.format(epoch=epoch, num_epochs=self.num_epochs) + ' Train'
-        with tqdm(total=len(self.train_dl), ncols=self.ncols, desc=desc) as t:
-            for data in self.train_dl:
-                data = self.train_preprocessing(data)
-                output, target = self.forward(data)
 
-                loss = self.metrics[0](output, target)
-                for metric in self.metrics:
-                    diff = metric(output, target)
-                    self.logs['val_' + metric.name].append(diff.item())
-
-                losses.append(loss.item())
-                mean_loss = sum(losses) / len(loss)
-                msg = f'val_loss{mean_loss:.4f}'
-                for metric in self.metrics[1:]:
-                    metric_name = 'val_' + metric.name
-                    mean_diff = sum(self.logs[metric_name]) / len(self.logs[metric_name])
-                    msg += f' val_{metric.name}{mean_diff:.4f}'
-                t.set_postfix_str(msg, refresh=False)
-                t.update()
-        time.sleep(0.001)  # for tqdm timing problem
+def _ignition_mean(a, b, i):
+    if math.isinf(a):
+        return b
+    else:
+        return (a * i + b) / (i + 1)

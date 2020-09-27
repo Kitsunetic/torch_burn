@@ -10,9 +10,6 @@ from torch_burn.metrics import Metric
 
 
 class Callback:
-    def __init__(self):
-        pass
-
     def on_epoch_begin(self, is_train: bool, epoch: int, logs: dict):
         pass
 
@@ -22,8 +19,6 @@ class Callback:
 
 class MetricImprovingCallback(Callback):
     def __init__(self, monitor: Metric):
-        super(MetricImprovingCallback, self).__init__()
-
         self.monitor = monitor
 
         self.best_metric_value = math.inf
@@ -65,6 +60,9 @@ class SaveCheckpoint(MetricImprovingCallback):
         self.save_best_only = save_best_only
         self.verbose = verbose
 
+        # make checkpoint directory
+        self.filepath.parent.mkdir(parents=True, exist_ok=True)
+
     def on_epoch_end(self, is_train: bool, epoch: int, logs: dict):
         if not is_train:
             if self.save_best_only:
@@ -86,10 +84,9 @@ class SaveCheckpoint(MetricImprovingCallback):
             filepath = str(self.filepath).format(epoch=epoch, **logs)
             data = {}
             for k, v in self.checkpoint_spec.items():
-                vtype = type(self.checkpoint_spec[k])
-                if issubclass(vtype, nn.DataParallel):
+                if isinstance(self.checkpoint_spec[k], nn.DataParallel):
                     data[k] = v.module.state_dict()
-                elif issubclass(vtype, nn.Module) or issubclass(vtype, Optimizer):
+                elif isinstance(self.checkpoint_spec[k], nn.Module) or isinstance(self.checkpoint_spec[k], Optimizer):
                     data[k] = v.state_dict()
                 else:
                     data[k] = v
@@ -102,7 +99,7 @@ class SaveSampleBase(Callback):
     Must be specified how to save sample data through `save_data` overriding function.
     """
 
-    def __init__(self, model: nn.Module, sample_input: torch.Tensor, filepath: AnyStr, verbose=False):
+    def __init__(self, model: nn.Module, sample_input: torch.Tensor, filepath: AnyStr, verbose=True):
         """
 
         :param model: model which already uploaded on GPU if you are tending to use GPU
@@ -110,7 +107,6 @@ class SaveSampleBase(Callback):
         :param filepath: adaptive filepath string
         :param verbose:
         """
-        super(SaveSampleBase, self).__init__()
         self.model = model
         self.sample_input = sample_input
         self.filepath = Path(filepath)
@@ -119,6 +115,8 @@ class SaveSampleBase(Callback):
     def on_epoch_end(self, is_train: bool, epoch: int, logs: dict):
         if not is_train:
             with torch.no_grad():
+                self.model.eval()
+
                 filepath = str(self.filepath).format(epoch=epoch, **logs)
                 device = next(self.model.parameters()).device
                 x = self.sample_input.to(device)
@@ -133,7 +131,7 @@ class SaveSampleBase(Callback):
 
 
 class EarlyStopping(MetricImprovingCallback):
-    def __init__(self, monitor: Metric, patience=10, verbose=False):
+    def __init__(self, monitor: Metric, patience=10, verbose=True):
         super(EarlyStopping, self).__init__(monitor)
 
         self.patience = patience
@@ -154,7 +152,7 @@ class EarlyStopping(MetricImprovingCallback):
 
 
 class LRDecaying(MetricImprovingCallback):
-    def __init__(self, optim: Optimizer, monitor: Metric, patience=5, decay_rate=0.5, verbose=False):
+    def __init__(self, optim: Optimizer, monitor: Metric, patience=5, decay_rate=0.5, verbose=True):
         super(LRDecaying, self).__init__(monitor)
 
         self.optim = optim
@@ -184,3 +182,15 @@ class LRDecaying(MetricImprovingCallback):
 
     def on_metric_improved(self, is_train: bool, epoch: int, logs: dict, metric_name: str, metric_value: float):
         self.decaying_cnt = 0
+
+
+class Tensorboard(Callback):
+    def __init__(self, logdir: AnyStr, model: nn.Module = None):
+        self.logdir = Path(logdir)
+        self.model = model
+
+        self.logdir.mkdir(parents=True, exist_ok=True)
+
+    def on_epoch_end(self, is_train: bool, epoch: int, logs: dict):
+        # TODO
+        pass
