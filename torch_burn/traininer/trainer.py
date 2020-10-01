@@ -145,7 +145,7 @@ class Trainer:
 
                 # backward
                 metric = self.metrics[0]
-                loss = metric(*out[:2])
+                loss = metric.get_value(*out[:2])
                 if is_train:
                     for optim in self.optim:
                         optim.zero_grad()
@@ -163,9 +163,11 @@ class Trainer:
                     self.model.eval()
                     for metric in self.metrics[1:]:
                         name = ('val_' if not is_train else '') + metric.name
-                        value = metric(pred, target)
-                        losses[name] = value.item()
-                        self.logs[name] = _ignition_mean(self.logs[name], value.item(), i)
+                        value = metric.get_value(pred, target)
+                        if isinstance(value, torch.Tensor):
+                            value = value.item()
+                        losses[name] = value
+                        self.logs[name] = _ignition_mean(self.logs[name], value, i)
 
                 # update progressbar
                 msgs = []

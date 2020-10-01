@@ -10,7 +10,7 @@ class Metric:
         self.name = name
         self.mode = mode
 
-    def __call__(self, outputs: torch.tensor, targets: torch.tensor):
+    def get_value(self, outputs: torch.Tensor, targets: torch.Tensor):
         pass
 
 
@@ -19,6 +19,6 @@ class ModuleMetric(Metric):
         super(ModuleMetric, self).__init__(name, mode)
         self.module = module
 
-    def __call__(self, outputs: torch.tensor, targets: torch.tensor):
+    def get_value(self, outputs: torch.Tensor, targets: torch.Tensor):
         loss = self.module(outputs, targets)
         return loss

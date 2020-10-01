@@ -58,16 +58,17 @@ class MetricImprovingCallback(Callback):
 
 class SaveCheckpoint(MetricImprovingCallback):
     def __init__(self, checkpoint_spec: dict,
-                 filepath: AnyStr, monitor: Metric,
+                 monitor: Metric,
+                 save_dir: AnyStr,
+                 filepath: AnyStr = 'ckpt-epoch{epoch:04d}-val_loss{val_loss:.4f}.pth',
                  save_best_only=True, verbose=True):
         super(SaveCheckpoint, self).__init__(monitor)
 
         self.checkpoint_spec = checkpoint_spec
-        self.filepath = Path(filepath)
+        self.filepath = Path(save_dir) / filepath
         self.save_best_only = save_best_only
         self.verbose = verbose
 
-        # make checkpoint directory
         self.filepath.parent.mkdir(parents=True, exist_ok=True)
 
     def on_epoch_end(self, is_train: bool, epoch: int, logs: dict):
@@ -106,18 +107,36 @@ class SaveSampleBase(Callback):
     Must be specified how to save sample data through `save_data` overriding function.
     """
 
-    def __init__(self, model: nn.Module, sample_input: torch.Tensor, filepath: AnyStr, verbose=True):
+    def __init__(self, model: nn.Module, sample_input: torch.Tensor, save_dir: AnyStr,
+                 filepath: AnyStr = 'sample-epoch{epoch:04d}-val_loss{val_loss:.4f}.png',
+                 sample_input_filename: AnyStr = None,
+                 sample_gt: torch.Tensor = None, sample_gt_filename: AnyStr = None,
+                 verbose=True):
         """
 
         :param model: model which already uploaded on GPU if you are tending to use GPU
         :param sample_input: an input tensor data which could be directly fed into the model
         :param filepath: adaptive filepath string
+        :param sample_input_filename: if not None and save_input is overloaded, write sample_input as a file
+        :param sample_gt: if sample_gt and sample_gt_filename is not None, write sample ground truth as a file
+        :param sample_gt_filename:
         :param verbose:
         """
         self.model = model
         self.sample_input = sample_input
-        self.filepath = Path(filepath)
+        self.filepath = Path(save_dir) / filepath
         self.verbose = verbose
+        self.filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        if sample_input_filename:
+            fpath = self.filepath.parent / sample_input_filename
+            print('Write sample input:', fpath)
+            self.save_input(self.sample_input, fpath)
+
+        if sample_gt is not None and sample_gt_filename is not None:
+            fpath = self.filepath.parent / sample_gt_filename
+            print('Write sample gt:', fpath)
+            self.save_gt(sample_gt, fpath)
 
     def on_epoch_end(self, is_train: bool, epoch: int, logs: dict):
         if not is_train:
@@ -126,15 +145,21 @@ class SaveSampleBase(Callback):
 
                 filepath = str(self.filepath).format(epoch=epoch, **logs)
                 device = next(self.model.parameters()).device
-                x = self.sample_input.to(device)
+                x = self.sample_input.to(device).unsqueeze(0)
                 out = self.model(x)
 
                 if self.verbose:
                     print('Write sample', Path(filepath).name)
                 self.save_data(out, filepath)
 
-    def save_data(self, output: torch.tensor, filepath: str):
+    def save_input(self, input: torch.Tensor, filepath: str):
+        pass
+
+    def save_data(self, output: torch.Tensor, filepath: str):
         raise NotImplementedError('SaveSampleBase is abstract class which must be inherited')
+
+    def save_gt(self, gt: torch.Tensor, filepath: str):
+        pass
 
 
 class EarlyStopping(MetricImprovingCallback):
@@ -149,13 +174,15 @@ class EarlyStopping(MetricImprovingCallback):
     def on_metric_not_improved(self, is_train: bool, epoch: int, logs: dict, metric_name: str, metric_value: float):
         if not is_train:
             self.stopping_cnt += 1
+            print('val_loss is not improved for', self.stopping_cnt, 'epochs')
             if self.stopping_cnt >= self.patience:
                 if self.verbose:
                     metric_name, metric_value = super().get_metric_info(logs)
                     print('Stop training because', metric_name, 'did not improved for', self.patience, 'epochs')
 
     def on_metric_improved(self, is_train: bool, epoch: int, logs: dict, metric_name: str, metric_value: float):
-        self.stopping_cnt = 0
+        if not is_train:
+            self.stopping_cnt = 0
 
 
 class LRDecaying(MetricImprovingCallback):
@@ -188,14 +215,21 @@ class LRDecaying(MetricImprovingCallback):
                 self.lr = new_lr
 
     def on_metric_improved(self, is_train: bool, epoch: int, logs: dict, metric_name: str, metric_value: float):
-        self.decaying_cnt = 0
+        if not is_train:
+            self.decaying_cnt = 0
 
 
 class Tensorboard(Callback):
     def __init__(self, logdir: AnyStr, model: nn.Module = None, input_shape=None, comment: str = ''):
         self.writer = SummaryWriter(logdir, comment=comment)
+
         if model is not None and input_shape is not None:
-            self.writer.add_graph(model, input_shape)
+            with torch.no_grad():
+                model.eval()
+
+                device = next(model.parameters())[0].device
+                random_input = torch.rand(input_shape, dtype=torch.float32).to(device)
+                self.writer.add_graph(model, random_input)
 
     def on_batch_end(self, is_train: bool, epoch: int, losses: dict):
         for k, v in losses.items():
