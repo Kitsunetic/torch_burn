@@ -11,7 +11,9 @@ from torch_burn.metrics import Metric
 
 
 class Callback:
-    def on_epoch_begin(self, is_train: bool, epoch: int, logs: dict):  # TODO logs 지우기
+    priority = 100
+
+    def on_epoch_begin(self, is_train: bool, epoch: int):
         pass
 
     def on_epoch_end(self, is_train: bool, epoch: int, logs: dict):
@@ -111,7 +113,7 @@ class SaveSampleBase(Callback):
                  filepath: AnyStr = 'sample-epoch{epoch:04d}-val_loss{val_loss:.4f}.png',
                  sample_input_filename: AnyStr = None,
                  sample_gt: torch.Tensor = None, sample_gt_filename: AnyStr = None,
-                 verbose=True):
+                 cuda=True, verbose=True):
         """
 
         :param model: model which already uploaded on GPU if you are tending to use GPU
@@ -127,6 +129,7 @@ class SaveSampleBase(Callback):
         self.filepath = Path(save_dir) / filepath
         self.verbose = verbose
         self.filepath.parent.mkdir(parents=True, exist_ok=True)
+        self.cuda = cuda
 
         if sample_input_filename:
             fpath = self.filepath.parent / sample_input_filename
@@ -144,8 +147,9 @@ class SaveSampleBase(Callback):
                 self.model.eval()
 
                 filepath = str(self.filepath).format(epoch=epoch, **logs)
-                device = next(self.model.parameters()).device
-                x = self.sample_input.to(device).unsqueeze(0)
+                x = self.sample_input.unsqueeze(0)
+                if self.cuda:
+                    x = x.cuda()
                 out = self.model(x)
 
                 if self.verbose:
@@ -153,12 +157,15 @@ class SaveSampleBase(Callback):
                 self.save_data(out, filepath)
 
     def save_input(self, input: torch.Tensor, filepath: str):
+        """Specify how to save input data"""
         pass
 
     def save_data(self, output: torch.Tensor, filepath: str):
+        """Specify how to save output data"""
         raise NotImplementedError('SaveSampleBase is abstract class which must be inherited')
 
     def save_gt(self, gt: torch.Tensor, filepath: str):
+        """Specify how to save ground truth data"""
         pass
 
 
@@ -206,7 +213,7 @@ class LRDecaying(MetricImprovingCallback):
                 self.decaying_cnt = 0
                 new_lr = self.lr * self.decay_rate
                 if self.verbose:
-                    metric_name, metric_value = super().get_metric_info(logs)
+                    metric_name, metric_value = self.get_metric_info(logs)
                     print('Decaying lr from', self.lr, 'to', new_lr,
                           'because', metric_name, 'did not improved for', self.patience, 'epochs')
 
@@ -220,16 +227,18 @@ class LRDecaying(MetricImprovingCallback):
 
 
 class Tensorboard(Callback):
-    def __init__(self, logdir: AnyStr, model: nn.Module = None, input_shape=None, comment: str = ''):
+    def __init__(self, logdir: AnyStr, model: nn.Module = None,
+                 sample_input: torch.Tensor = None, comment: str = '', cuda=True):
         self.writer = SummaryWriter(logdir, comment=comment)
 
-        if model is not None and input_shape is not None:
+        if model is not None and sample_input is not None:
             with torch.no_grad():
                 model.eval()
 
-                device = next(model.parameters())[0].device
-                random_input = torch.rand(input_shape, dtype=torch.float32).to(device)
-                self.writer.add_graph(model, random_input)
+                sample_input = sample_input.unsqueeze(0)
+                if cuda:
+                    sample_input = sample_input.cuda()
+                self.writer.add_graph(model, sample_input)
 
     def on_batch_end(self, is_train: bool, epoch: int, losses: dict):
         for k, v in losses.items():

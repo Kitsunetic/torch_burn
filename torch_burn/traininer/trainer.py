@@ -44,8 +44,6 @@ class Trainer:
         self.data_parallel = data_parallel
 
         self.metrics[0].name = 'loss'
-        self.logs = None
-        self._init_logs()
 
         # set devices
         self._device = next(iter(model.parameters()))[0].device
@@ -58,8 +56,9 @@ class Trainer:
         return self.model(x), y
 
     def _init_logs(self):
-        self.logs = {metric.name: (math.inf if metric.mode == 'min' else -math.inf) for metric in self.metrics}
-        self.logs.update({'val_' + k: v for k, v in self.logs.items()})
+        logs = {metric.name: (math.inf if metric.mode == 'min' else -math.inf) for metric in self.metrics}
+        logs.update({'val_' + k: v for k, v in logs.items()})
+        return logs
 
     def fit(self,
             train_dataset: Dataset,
@@ -71,9 +70,30 @@ class Trainer:
             shuffle=True,
             num_workers=cpu_count(),
             drop_last=False):
+        """
+        Train and validate model with specified dataset
 
+        Parameters
+        ----------
+        train_dataset :
+        valid_dataset :
+        train_valid_split :
+        num_epochs :
+        start_epoch :
+        batch_size :
+        shuffle :
+        num_workers :
+        drop_last :
+
+        Returns
+        -------
+
+        """
         # make dataset
         assert valid_dataset is None or train_valid_split is None
+
+        self.train_dataset = train_dataset
+        self.valid_dataset = valid_dataset
 
         if valid_dataset is None and train_valid_split is not None:
             assert 0 < train_valid_split < 1
@@ -98,27 +118,42 @@ class Trainer:
 
         for epoch in range(start_epoch, num_epochs):
             desc_base = self.desc.format(epoch=epoch, num_epochs=num_epochs)
+            logs = self._init_logs()
 
             # train
             for callback in self.callbacks:
-                callback.on_epoch_begin(True, epoch, self.logs)
+                callback.on_epoch_begin(True, epoch)
             self.model.train()
-            self.loop(True, epoch, train_dl, tqdm_desc=desc_base + ' Train')
+            self.loop(True, epoch, train_dl, logs, tqdm_desc=desc_base + ' Train')
             for callback in self.callbacks:
-                callback.on_epoch_end(True, epoch, self.logs)
+                callback.on_epoch_end(True, epoch, logs)
 
             # validation
             if valid_dl is not None:
                 for callback in self.callbacks:
-                    callback.on_epoch_begin(False, epoch, self.logs)
+                    callback.on_epoch_begin(False, epoch)
                 with torch.no_grad():
                     self.model.eval()
-                    self.loop(False, epoch, valid_dl, tqdm_desc=desc_base + ' Validation')
+                    self.loop(False, epoch, valid_dl, logs, tqdm_desc=desc_base + ' Validation')
                 for callback in self.callbacks:
-                    callback.on_epoch_end(False, epoch, self.logs)
+                    callback.on_epoch_end(False, epoch, logs)
 
-    def loop(self, is_train: bool, epoch: int, dl: DataLoader, tqdm_desc: str = ''):
-        self._init_logs()  # TODO
+    def loop(self, is_train: bool, epoch: int, dl: DataLoader, logs, tqdm_desc: str = ''):
+        """
+        Each loop for training and validation
+
+        Parameters
+        ----------
+        is_train :
+        epoch :
+        dl :
+        logs :
+        tqdm_desc :
+
+        Returns
+        -------
+
+        """
         losses = {('' if is_train else 'val_') + metric.name: 0 for metric in self.metrics}
 
         with tqdm(total=len(dl), ncols=self.ncols, desc=tqdm_desc) as t:
@@ -156,7 +191,7 @@ class Trainer:
                 # calculate metrics
                 name = ('val_' if not is_train else '') + 'loss'
                 losses[name] = loss.item()
-                self.logs[name] = _ignition_mean(self.logs[name], loss.item(), i)
+                logs[name] = _ignition_mean(logs[name], loss.item(), i)
 
                 pred, target = out[0].detach(), out[1].detach()
                 with torch.no_grad():
@@ -167,13 +202,13 @@ class Trainer:
                         if isinstance(value, torch.Tensor):
                             value = value.item()
                         losses[name] = value
-                        self.logs[name] = _ignition_mean(self.logs[name], value, i)
+                        logs[name] = _ignition_mean(logs[name], value, i)
 
                 # update progressbar
                 msgs = []
                 for metric in self.metrics:
                     name = ('val_' if not is_train else '') + metric.name
-                    msg = f'{name} {self.logs[name]:.4f}'
+                    msg = f'{name} {logs[name]:.4f}'
                     msgs.append(msg)
                 msg = ' '.join(msgs)
                 t.set_postfix_str(msg, refresh=False)
