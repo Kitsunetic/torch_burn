@@ -11,6 +11,8 @@ from tqdm import tqdm
 
 from torch_burn.callbacks import Callback, EarlyStopping
 from torch_burn.metrics import Metric
+from torch_burn.datasets.utils import kfold
+
 
 class Trainer:
     def __init__(self,
@@ -116,8 +118,8 @@ class Trainer:
                 {'val_' + metric.name: math.inf if metric.mode == 'min' else -math.inf for metric in self.metrics})
 
         loop_stopper = False
-        for epoch in range(start_epoch, num_epochs+1):
-            if loop_stopper: # early stopping
+        for epoch in range(start_epoch, num_epochs + 1):
+            if loop_stopper:  # early stopping
                 break
 
             desc_base = self.desc.format(epoch=epoch, num_epochs=num_epochs)
@@ -146,6 +148,20 @@ class Trainer:
                         if callback.stopped:
                             loop_stopper = True
                             break
+
+    def fit_kfold(self,
+                  dataset: Dataset,
+                  num_folds: int,
+                  fold: int,
+                  num_epochs: int = 1,
+                  start_epoch: int = 1,
+                  batch_size=32,
+                  shuffle=True,
+                  num_workers=cpu_count(),
+                  drop_last=False):
+        train_ds, valid_ds = kfold(dataset, num_folds, fold)
+        return self.fit(train_ds, valid_ds, num_epochs=num_epochs, start_epoch=start_epoch, batch_size=batch_size,
+                        shuffle=shuffle, num_workers=num_workers, drop_last=drop_last)
 
     def loop(self, is_train: bool, epoch: int, dl: DataLoader, logs, tqdm_desc: str = ''):
         """
