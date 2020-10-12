@@ -10,8 +10,8 @@ from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
 
 from torch_burn.callbacks import Callback, EarlyStopping
-from torch_burn.metrics import Metric
 from torch_burn.datasets.utils import kfold
+from torch_burn.metrics import Metric
 
 
 class Trainer:
@@ -23,7 +23,8 @@ class Trainer:
                  verbose: bool = True,
                  desc: str = '[{epoch:04d}/{num_epochs:04d}]',
                  ncols: int = None,
-                 data_parallel: bool = False):
+                 data_parallel: bool = False,
+                 gpus: int = torch.cuda.device_count()):
         """
 
         :param model: a pytorch model
@@ -43,11 +44,9 @@ class Trainer:
         self.desc = desc
         self.ncols = ncols
         self.data_parallel = data_parallel
+        self.gpus = gpus
 
         self.metrics[0].name = 'loss'
-
-        # set devices
-        self._device = next(iter(model.parameters()))[0].device
 
         # data parallel
         if self.data_parallel:
@@ -192,8 +191,8 @@ class Trainer:
                 # match device with model
                 new_data = []
                 for d in data:
-                    if isinstance(d, torch.Tensor):
-                        new_data.append(d.to(self._device))
+                    if isinstance(d, torch.Tensor) and self.gpus:
+                        new_data.append(d.cuda())
                     else:
                         new_data.append(d)
                 data = new_data
@@ -243,7 +242,6 @@ class Trainer:
                     callback.on_batch_end(is_train, epoch, losses)
 
         time.sleep(0.001)  # for tqdm timing problem
-
 
 def _ignition_mean(a, b, i):
     if math.isinf(a):

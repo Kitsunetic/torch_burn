@@ -1,28 +1,52 @@
 import math
+import random
 from pathlib import Path
 from typing import AnyStr
+from typing import Tuple
 
 import torch
 import torch.nn as nn
 from torch.optim.optimizer import Optimizer
+from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
 
 from torch_burn.metrics import Metric
 
 
 class Callback:
+    # multiple callbacks are executed along the priority
     priority = 100
 
-    def on_epoch_begin(self, is_train: bool, epoch: int):
+    def on_train_epoch_begin(self, epoch: int):
+        """Event when train epoch begin"""
         pass
 
-    def on_epoch_end(self, is_train: bool, epoch: int, logs: dict):
+    def on_train_epoch_end(self, epoch: int, logs: dict):
+        """Event when train epoch end"""
         pass
 
-    def on_batch_begin(self, is_train: bool, epoch: int):
+    def on_valid_epoch_begin(self, epoch: int):
+        """Event when validation epoch begin"""
         pass
 
-    def on_batch_end(self, is_train: bool, epoch: int, losses: dict):
+    def on_valid_epoch_end(self, epoch: int, logs: dict):
+        """Event when validation epoch end"""
+        pass
+
+    def on_train_batch_begin(self, epoch: int, batch_idx: int):
+        """Event when train batch begin"""
+        pass
+
+    def on_train_batch_end(self, epoch: int, batch_idx: int, losses: dict):
+        """Event when train batch end"""
+        pass
+
+    def on_valid_batch_begin(self, epoch: int, batch_idx: int):
+        """Event when validation batch begin"""
+        pass
+
+    def on_valid_batch_end(self, epoch: int, batch_idx: int, losses: dict):
+        """Event when validation batch end"""
         pass
 
 
@@ -34,16 +58,15 @@ class MetricImprovingCallback(Callback):
         if self.monitor.mode == 'max':
             self.best_metric_value *= -1
 
-    def on_epoch_end(self, is_train: bool, epoch: int, logs: dict):
-        if not is_train:
-            metric_name, metric_value = self.get_metric_info(logs)
-            condition1 = (self.monitor.mode == 'max' and self.best_metric_value < metric_value)
-            condition2 = (self.monitor.mode == 'min' and self.best_metric_value > metric_value)
-            if condition1 or condition2:
-                self.on_metric_improved(is_train, epoch, logs, metric_name, metric_value)
-                self.best_metric_value = metric_value
-            else:
-                self.on_metric_not_improved(is_train, epoch, logs, metric_name, metric_value)
+    def on_valid_epoch_end(self, epoch: int, logs: dict):
+        metric_name, metric_value = self.get_metric_info(logs)
+        condition1 = (self.monitor.mode == 'max' and self.best_metric_value < metric_value)
+        condition2 = (self.monitor.mode == 'min' and self.best_metric_value > metric_value)
+        if condition1 or condition2:
+            self.on_metric_improved(epoch, logs, metric_name, metric_value)
+            self.best_metric_value = metric_value
+        else:
+            self.on_metric_not_improved(epoch, logs, metric_name, metric_value)
 
     def get_metric_info(self, logs: dict):
         metric_name = 'val_' + self.monitor.name
@@ -51,10 +74,10 @@ class MetricImprovingCallback(Callback):
         metric_value = logs[metric_name]
         return metric_name, metric_value
 
-    def on_metric_improved(self, is_train: bool, epoch: int, logs: dict, metric_name: str, metric_value: float):
+    def on_metric_improved(self, epoch: int, logs: dict, metric_name: str, metric_value: float):
         pass
 
-    def on_metric_not_improved(self, is_train: bool, epoch: int, logs: dict, metric_name: str, metric_value: float):
+    def on_metric_not_improved(self, epoch: int, logs: dict, metric_name: str, metric_value: float):
         pass
 
 
@@ -73,34 +96,32 @@ class SaveCheckpoint(MetricImprovingCallback):
 
         self.filepath.parent.mkdir(parents=True, exist_ok=True)
 
-    def on_epoch_end(self, is_train: bool, epoch: int, logs: dict):
-        if not is_train:
-            if self.save_best_only:
-                super().on_epoch_end(is_train, epoch, logs)
+    def on_valid_epoch_end(self, epoch: int, logs: dict):
+        if self.save_best_only:
+            super().on_valid_epoch_end(epoch, logs)
+        else:
+            metric_name, metric_value = self.get_metric_info(logs)
+            self.on_metric_improved(epoch, logs, metric_name, metric_value)
+
+    def on_metric_improved(self, epoch: int, logs: dict, metric_name: str, metric_value: float):
+        if self.verbose:
+            text = 'Save checkpoint: '
+            text += metric_name
+            text += ' decreased ' if self.monitor.mode == 'min' else ' increased '
+            text += f'from {self.best_metric_value} to {metric_value}'
+            print(text)
+        self.best_metric_value = metric_value
+
+        filepath = str(self.filepath).format(epoch=epoch, **logs)
+        data = {}
+        for k, v in self.checkpoint_spec.items():
+            if isinstance(self.checkpoint_spec[k], nn.DataParallel):
+                data[k] = v.module.state_dict()
+            elif isinstance(self.checkpoint_spec[k], nn.Module) or isinstance(self.checkpoint_spec[k], Optimizer):
+                data[k] = v.state_dict()
             else:
-                metric_name, metric_value = self.get_metric_info(logs)
-                self.on_metric_improved(is_train, epoch, logs, metric_name, metric_value)
-
-    def on_metric_improved(self, is_train: bool, epoch: int, logs: dict, metric_name: str, metric_value: float):
-        if not is_train:
-            if self.verbose:
-                text = 'Save checkpoint: '
-                text += metric_name
-                text += ' decreased ' if self.monitor.mode == 'min' else ' increased '
-                text += f'from {self.best_metric_value} to {metric_value}'
-                print(text)
-            self.best_metric_value = metric_value
-
-            filepath = str(self.filepath).format(epoch=epoch, **logs)
-            data = {}
-            for k, v in self.checkpoint_spec.items():
-                if isinstance(self.checkpoint_spec[k], nn.DataParallel):
-                    data[k] = v.module.state_dict()
-                elif isinstance(self.checkpoint_spec[k], nn.Module) or isinstance(self.checkpoint_spec[k], Optimizer):
-                    data[k] = v.state_dict()
-                else:
-                    data[k] = v
-            torch.save(data, filepath)
+                data[k] = v
+        torch.save(data, filepath)
 
 
 class SaveSampleBase(Callback):
@@ -141,20 +162,19 @@ class SaveSampleBase(Callback):
             print('Write sample gt:', fpath)
             self.save_gt(sample_gt, fpath)
 
-    def on_epoch_end(self, is_train: bool, epoch: int, logs: dict):
-        if not is_train:
-            with torch.no_grad():
-                self.model.eval()
+    def on_valid_epoch_end(self, epoch: int, logs: dict):
+        with torch.no_grad():
+            self.model.eval()
 
-                filepath = str(self.filepath).format(epoch=epoch, **logs)
-                x = self.sample_input.unsqueeze(0)
-                if self.cuda:
-                    x = x.cuda()
-                out = self.model(x)
+            filepath = str(self.filepath).format(epoch=epoch, **logs)
+            x = self.sample_input.unsqueeze(0)
+            if self.cuda:
+                x = x.cuda()
+            out = self.model(x)
 
-                if self.verbose:
-                    print('Write sample', Path(filepath).name)
-                self.save_data(out, filepath)
+            if self.verbose:
+                print('Write sample', Path(filepath).name)
+            self.save_data(out, filepath)
 
     def save_input(self, input: torch.Tensor, filepath: str):
         """Specify how to save input data"""
@@ -169,7 +189,52 @@ class SaveSampleBase(Callback):
         pass
 
 
+class SaveSampleBase2(Callback):
+    def __init__(self, model: nn.Module, ds: Dataset, save_dir: AnyStr,
+                 filename: AnyStr = 'sample-epoch{epoch:04d}-val_loss{val_loss:.4f}.png',
+                 cuda=True, verbose=True):
+        super(SaveSampleBase2, self).__init__()
+
+        self.model = model
+        self.save_dir = Path(save_dir)
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.filename = filename
+        self.cuda = cuda
+        self.verbose = verbose
+
+        sample = ds[random.randint(0, len(ds) - 1)]
+        x, y = self.data_preprocessing(sample)
+        self.save_x(x)
+        self.save_y(y)
+        self.x = x
+
+    def data_preprocessing(self, data) -> Tuple[torch.Tensor, torch.Tensor]:
+        return data[:2]
+
+    def save_x(self, x):
+        pass
+
+    def save_y(self, y):
+        pass
+
+    def save_out(self, out, path: str):
+        pass
+
+    def on_valid_epoch_end(self, epoch: int, logs: dict):
+        p = self.save_dir / self.filename.format(epoch=epoch, **logs)
+        if self.verbose:
+            print('Write sample', p.name)
+
+        x = self.x.unsqueeze(0)
+        if self.cuda:
+            x = x.cuda()
+
+        y = self.model(x)
+        self.save_out(y, str(p))
+
+
 class EarlyStopping(MetricImprovingCallback):
+    priority = 1
     stopped = False
 
     def __init__(self, monitor: Metric, patience=10, verbose=True):
@@ -180,19 +245,17 @@ class EarlyStopping(MetricImprovingCallback):
 
         self.stopping_cnt = 0
 
-    def on_metric_not_improved(self, is_train: bool, epoch: int, logs: dict, metric_name: str, metric_value: float):
-        if not is_train:
-            self.stopping_cnt += 1
-            print('val_loss is not improved for', self.stopping_cnt, 'epochs')
-            if self.stopping_cnt >= self.patience:
-                if self.verbose:
-                    metric_name, metric_value = super().get_metric_info(logs)
-                    print('Stop training because', metric_name, 'did not improved for', self.patience, 'epochs')
-                self.stopped = True
+    def on_metric_not_improved(self, epoch: int, logs: dict, metric_name: str, metric_value: float):
+        self.stopping_cnt += 1
+        print('val_loss is not improved for', self.stopping_cnt, 'epochs')
+        if self.stopping_cnt >= self.patience:
+            if self.verbose:
+                metric_name, metric_value = super().get_metric_info(logs)
+                print('Stop training because', metric_name, 'did not improved for', self.patience, 'epochs')
+            self.stopped = True
 
-    def on_metric_improved(self, is_train: bool, epoch: int, logs: dict, metric_name: str, metric_value: float):
-        if not is_train:
-            self.stopping_cnt = 0
+    def on_metric_improved(self, epoch: int, logs: dict, metric_name: str, metric_value: float):
+        self.stopping_cnt = 0
 
 
 class LRDecaying(MetricImprovingCallback):
@@ -209,29 +272,30 @@ class LRDecaying(MetricImprovingCallback):
 
         self.decaying_cnt = 0
 
-    def on_metric_not_improved(self, is_train: bool, epoch: int, logs: dict, metric_name: str, metric_value: float):
-        if not is_train:
-            self.decaying_cnt += 1
-            if self.decaying_cnt >= self.patience:
-                self.decaying_cnt = 0
-                new_lr = self.lr * self.decay_rate
-                if self.verbose:
-                    metric_name, metric_value = self.get_metric_info(logs)
-                    print('Decaying lr from', self.lr, 'to', new_lr,
-                          'because', metric_name, 'did not improved for', self.patience, 'epochs')
-
-                for p in self.optim.param_groups:
-                    p['lr'] = new_lr
-                self.lr = new_lr
-
-    def on_metric_improved(self, is_train: bool, epoch: int, logs: dict, metric_name: str, metric_value: float):
-        if not is_train:
+    def on_metric_not_improved(self, epoch: int, logs: dict, metric_name: str, metric_value: float):
+        self.decaying_cnt += 1
+        if self.decaying_cnt >= self.patience:
             self.decaying_cnt = 0
+            new_lr = self.lr * self.decay_rate
+            if self.verbose:
+                metric_name, metric_value = self.get_metric_info(logs)
+                print('Decaying lr from', self.lr, 'to', new_lr,
+                      'because', metric_name, 'did not improved for', self.patience, 'epochs')
+
+            for p in self.optim.param_groups:
+                p['lr'] = new_lr
+            self.lr = new_lr
+
+    def on_metric_improved(self, epoch: int, logs: dict, metric_name: str, metric_value: float):
+        self.decaying_cnt = 0
 
 
 class Tensorboard(Callback):
-    def __init__(self, logdir: AnyStr, model: nn.Module = None,
-                 sample_input: torch.Tensor = None, comment: str = '',
+    def __init__(self,
+                 logdir: AnyStr,
+                 model: nn.Module = None,
+                 sample_input: torch.Tensor = None,
+                 comment: str = '',
                  gpus=torch.cuda.device_count()):
         self.writer = SummaryWriter(logdir, comment=comment)
 
@@ -244,6 +308,6 @@ class Tensorboard(Callback):
                     sample_input = sample_input.cuda()
                 self.writer.add_graph(model, sample_input)
 
-    def on_batch_end(self, is_train: bool, epoch: int, losses: dict):
+    def on_batch_end(self, epoch: int, losses: dict, logs: dict):
         for k, v in losses.items():
             self.writer.add_scalar(k, v, epoch)
