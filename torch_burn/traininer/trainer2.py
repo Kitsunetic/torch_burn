@@ -1,7 +1,7 @@
 import math
 import time
 from multiprocessing import cpu_count
-from typing import Iterable, List, Union
+from typing import List, Union, Iterable
 
 import torch
 import torch.nn as nn
@@ -75,7 +75,6 @@ class Trainer2:
                 m.on_train_epoch_begin()
 
             # train loop
-            torch.set_grad_enabled(True)
             self.model.train()
             with tqdm(total=len(train_dl), ncols=self.ncols,
                       desc=self.desc.format(epoch=epoch, num_epochs=num_epochs) + ' Train') as t:
@@ -137,57 +136,57 @@ class Trainer2:
                 m.on_valid_epoch_begin()
 
             # valid loop
-            torch.set_grad_enabled(False)
-            self.model.eval()
-            with tqdm(total=len(valid_dl), ncols=self.ncols,
-                      desc=self.desc.format(epoch=epoch, num_epochs=num_epochs) + ' Validation') as t:
-                for batch_idx, data in enumerate(valid_dl):
-                    # train batch callbacks
-                    for cb in self.callbacks:
-                        cb.on_valid_batch_begin(epoch, batch_idx)
+            with torch.no_grad():
+                self.model.eval()
+                with tqdm(total=len(valid_dl), ncols=self.ncols,
+                          desc=self.desc.format(epoch=epoch, num_epochs=num_epochs) + ' Validation') as t:
+                    for batch_idx, data in enumerate(valid_dl):
+                        # train batch callbacks
+                        for cb in self.callbacks:
+                            cb.on_valid_batch_begin(epoch, batch_idx)
 
-                    # forward / backward
-                    pred, y = self.forward(data)
-                    loss = self.metrics[0].get_value(pred, y)
+                        # forward / backward
+                        pred, y = self.forward(data)
+                        loss = self.metrics[0].get_value(pred, y)
 
-                    # metrics
-                    losses['val_loss'] = loss.item()
-                    logs['val_loss'] = _ignition_mean(logs['val_loss'], loss.item(), batch_idx)
+                        # metrics
+                        losses['val_loss'] = loss.item()
+                        logs['val_loss'] = _ignition_mean(logs['val_loss'], loss.item(), batch_idx)
 
-                    pred, y = pred.detach(), y.detach()
-                    with torch.no_grad():
-                        self.model.eval()
-                        for m in self.metrics[1:]:
-                            v = m.get_value(pred, y)
+                        pred, y = pred.detach(), y.detach()
+                        with torch.no_grad():
+                            self.model.eval()
+                            for m in self.metrics[1:]:
+                                v = m.get_value(pred, y)
+                                if m.visible:
+                                    if isinstance(v, torch.Tensor):
+                                        v = v.item()
+                                    name = 'val_' + m.name
+                                    losses[name] = v
+                                    logs[name] = _ignition_mean(logs[name], v, batch_idx)
+
+                        # update progressbar
+                        msgs = []
+                        for m in self.metrics:
                             if m.visible:
-                                if isinstance(v, torch.Tensor):
-                                    v = v.item()
                                 name = 'val_' + m.name
-                                losses[name] = v
-                                logs[name] = _ignition_mean(logs[name], v, batch_idx)
+                                msgs.append(f'{name} {logs[name]:.4f}')
+                        msg = ' '.join(msgs)
+                        t.set_postfix_str(msg, refresh=False)
+                        t.update()
 
-                    # update progressbar
-                    msgs = []
-                    for m in self.metrics:
-                        if m.visible:
-                            name = 'val_' + m.name
-                            msgs.append(f'{name} {logs[name]:.4f}')
-                    msg = ' '.join(msgs)
-                    t.set_postfix_str(msg, refresh=False)
-                    t.update()
+                        # train batch callbacks
+                        for cb in self.callbacks:
+                            cb.on_valid_batch_end(epoch, batch_idx, losses)
 
-                    # train batch callbacks
-                    for cb in self.callbacks:
-                        cb.on_valid_batch_end(epoch, batch_idx, losses)
+                # Wait for tqdm closed
+                time.sleep(0.01)
 
-            # wait for tqdm closed
-            time.sleep(0.01)
-
-            # train epoch callbacks
-            for cb in self.callbacks:
-                cb.on_valid_epoch_end(epoch, logs)
-            for m in self.metrics:
-                m.on_valid_epoch_end()
+                # Validation epoch callbacks
+                for cb in self.callbacks:
+                    cb.on_valid_epoch_end(epoch, logs)
+                for m in self.metrics:
+                    m.on_valid_epoch_end()
 
     def _init_dataset(self,
                       train_dataset: Dataset,
@@ -251,6 +250,9 @@ class Trainer2:
 
     def forward(self, data):
         x, y = data[:2]
+        if self.gpus > 0:
+            x = x.cuda()
+            y = y.cuda()
         return self.model(x), y
 
 

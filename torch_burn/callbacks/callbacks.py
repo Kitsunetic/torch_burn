@@ -51,8 +51,9 @@ class Callback:
 
 
 class MetricImprovingCallback(Callback):
-    def __init__(self, monitor: Metric):
+    def __init__(self, monitor: Metric, minimum_difference=0):
         self.monitor = monitor
+        self.minimum_difference = minimum_difference
 
         self.best_metric_value = math.inf
         if self.monitor.mode == 'max':
@@ -60,8 +61,8 @@ class MetricImprovingCallback(Callback):
 
     def on_valid_epoch_end(self, epoch: int, logs: dict):
         metric_name, metric_value = self.get_metric_info(logs)
-        condition1 = (self.monitor.mode == 'max' and self.best_metric_value < metric_value)
-        condition2 = (self.monitor.mode == 'min' and self.best_metric_value > metric_value)
+        condition1 = (self.monitor.mode == 'max' and self.best_metric_value - metric_value < self.minimum_difference)
+        condition2 = (self.monitor.mode == 'min' and self.best_metric_value - metric_value > self.minimum_difference)
         if condition1 or condition2:
             self.on_metric_improved(epoch, logs, metric_name, metric_value)
             self.best_metric_value = metric_value
@@ -86,8 +87,9 @@ class SaveCheckpoint(MetricImprovingCallback):
                  monitor: Metric,
                  save_dir: AnyStr,
                  filepath: AnyStr = 'ckpt-epoch{epoch:04d}-val_loss{val_loss:.4f}.pth',
-                 save_best_only=True, verbose=True):
-        super(SaveCheckpoint, self).__init__(monitor)
+                 save_best_only=True, verbose=True,
+                 minimum_difference=0):
+        super(SaveCheckpoint, self).__init__(monitor, minimum_difference)
 
         self.checkpoint_spec = checkpoint_spec
         self.filepath = Path(save_dir) / filepath
@@ -190,31 +192,43 @@ class SaveSampleBase(Callback):
 
 
 class SaveSampleBase2(Callback):
-    def __init__(self, model: nn.Module, ds: Dataset, save_dir: AnyStr,
-                 filename: AnyStr = 'sample-epoch{epoch:04d}-val_loss{val_loss:.4f}.png',
-                 cuda=True, verbose=True):
+    def __init__(self,
+                 model: nn.Module,
+                 ds: Dataset,
+                 save_dir: AnyStr,
+                 output_ext: str,
+                 input_ext: str = '',
+                 filename: AnyStr = 'sample-epoch{epoch:04d}-val_loss{val_loss:.4f}',
+                 gpus=-1,
+                 verbose=True):
         super(SaveSampleBase2, self).__init__()
 
         self.model = model
         self.save_dir = Path(save_dir)
         self.save_dir.mkdir(parents=True, exist_ok=True)
-        self.filename = filename
-        self.cuda = cuda
+        self.input_ext = input_ext
+        self.output_ext = output_ext
+        self.filename = filename + self.output_ext
+        self.gpus = gpus
         self.verbose = verbose
 
         sample = ds[random.randint(0, len(ds) - 1)]
         x, y = self.data_preprocessing(sample)
-        self.save_x(x)
-        self.save_y(y)
         self.x = x
+
+        # Save input x, y
+        xpath = self.save_dir / ('sample-x' + self.input_ext)
+        ypath = self.save_dir / ('sample-y' + self.output_ext)
+        self.save_x(x, xpath)
+        self.save_y(y, ypath)
 
     def data_preprocessing(self, data) -> Tuple[torch.Tensor, torch.Tensor]:
         return data[:2]
 
-    def save_x(self, x):
+    def save_x(self, x, path: str):
         pass
 
-    def save_y(self, y):
+    def save_y(self, y, path: str):
         pass
 
     def save_out(self, out, path: str):
@@ -225,20 +239,23 @@ class SaveSampleBase2(Callback):
         if self.verbose:
             print('Write sample', p.name)
 
-        x = self.x.unsqueeze(0)
-        if self.cuda:
-            x = x.cuda()
+        with torch.no_grad():
+            self.model.eval()
 
-        y = self.model(x)
-        self.save_out(y, str(p))
+            x = self.x.unsqueeze(0)
+            if self.gpus > 0:
+                x = x.cuda()
+
+            y = self.model(x)
+            self.save_out(y, str(p))
 
 
 class EarlyStopping(MetricImprovingCallback):
     priority = 1
     stopped = False
 
-    def __init__(self, monitor: Metric, patience=10, verbose=True):
-        super(EarlyStopping, self).__init__(monitor)
+    def __init__(self, monitor: Metric, patience=10, verbose=True, minimum_difference=0):
+        super(EarlyStopping, self).__init__(monitor, minimum_difference)
 
         self.patience = patience
         self.verbose = verbose
@@ -259,8 +276,9 @@ class EarlyStopping(MetricImprovingCallback):
 
 
 class LRDecaying(MetricImprovingCallback):
-    def __init__(self, optim: Optimizer, monitor: Metric, patience=5, decay_rate=0.5, verbose=True):
-        super(LRDecaying, self).__init__(monitor)
+    def __init__(self, optim: Optimizer, monitor: Metric,
+                 patience=5, decay_rate=0.5, verbose=True, minimum_difference=0):
+        super(LRDecaying, self).__init__(monitor, minimum_difference)
 
         self.optim = optim
         self.patience = patience

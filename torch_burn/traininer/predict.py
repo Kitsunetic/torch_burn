@@ -46,17 +46,21 @@ class Predictor:
         if self.verbose:
             t = tqdm(total=len(dl), ncols=100, desc='Prediction')
 
+        rets = []
         for data in dl:
-            ret = self.forward(data) * 255
-            ret[ret > 255] = 255
+            ret = self.forward(data)
+            ret[ret > 1] = 1
             ret[ret < 0] = 0
+            ret *= 255
+            ret = ret.type(torch.uint8)
+            rets.append(ret)
 
             if self.verbose:
                 t.update()
-
-            yield ret
+        ret = torch.cat(rets)
 
         if self.verbose:
             t.close()
 
         self.on_predict_end()
+        return ret
