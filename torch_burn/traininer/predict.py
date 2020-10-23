@@ -49,10 +49,6 @@ class Predictor:
         rets = []
         for data in dl:
             ret = self.forward(data)
-            ret[ret > 1] = 1
-            ret[ret < 0] = 0
-            ret *= 255
-            ret = ret.type(torch.uint8)
             rets.append(ret)
 
             if self.verbose:
