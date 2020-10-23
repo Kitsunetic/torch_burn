@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(name='torch_burn',
       version='0.0.3',
@@ -8,5 +8,6 @@ setup(name='torch_burn',
       author_email='1996.jh.shim@gmail.com',
       description='torch burn',
       long_description=open('README.md').read(),
+      packages=setuptools.find_packages(),
       zip_safe=False,
       setup_requires=[])
