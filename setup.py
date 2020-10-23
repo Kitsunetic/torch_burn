@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name='torch_burn',
-      version='0.0.1',
+      version='0.0.2',
       url='https://github.com/Kitsunetic/torch_burn',
       license='MIT',
       author='Kitsunetic',
