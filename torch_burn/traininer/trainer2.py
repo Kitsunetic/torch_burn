@@ -9,7 +9,7 @@ from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
 
-from torch_burn.callbacks import Callback
+from torch_burn.callbacks import Callback, EarlyStopping
 from torch_burn.datasets.utils import kfold
 from torch_burn.metrics import Metric
 
@@ -190,6 +190,10 @@ class Trainer2:
                 # Validation epoch callbacks
                 for cb in self.callbacks:
                     cb.on_valid_epoch_end(epoch, logs)
+                    if isinstance(cb, EarlyStopping):
+                        if cb.stopped:
+                            self.stop_loop = True
+
                 for m in self.metrics:
                     m.on_valid_epoch_end()
 
