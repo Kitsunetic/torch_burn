@@ -98,6 +98,7 @@ class Trainer2:
                     losses['loss'] = loss.item()
                     logs['loss'] = _ignition_mean(logs['loss'], loss.item(), batch_idx)
 
+                    # Calculate additional losses
                     pred, y = pred.detach(), y.detach()
                     with torch.no_grad():
                         self.model.eval()
@@ -108,6 +109,7 @@ class Trainer2:
                                     v = v.item()
                                 losses[m.name] = v
                                 logs[m.name] = _ignition_mean(logs[m.name], v, batch_idx)
+                        self.model.train()
 
                     # update progressbar
                     msgs = []
