@@ -232,7 +232,7 @@ class Trainer2:
                               num_workers=self.cpus, drop_last=drop_last)
         valid_dl = None
         if valid_dataset is not None:
-            valid_dl = DataLoader(valid_dataset, batch_size=batch_size, shuffle=shuffle,
+            valid_dl = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False,
                                   num_workers=self.cpus, drop_last=drop_last)
 
         return train_dl, valid_dl
