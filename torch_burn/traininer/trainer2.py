@@ -73,7 +73,7 @@ class Trainer2:
                 for cb in self.callbacks:
                     cb.on_train_epoch_begin(epoch)
                 for m in self.metrics:
-                    m.on_train_epoch_begin()
+                    m.on_train_epoch_begin(epoch)
 
             # train loop
             self.model.train()
@@ -87,7 +87,7 @@ class Trainer2:
 
                     # forward / backward
                     pred, y = self.forward(data)
-                    loss = self.metrics[0].get_value(pred, y)
+                    loss = self.metrics[0].get_value(pred, y, is_train=False)
                     for optim in self.optim:
                         optim.zero_grad()
                     loss.backward()
@@ -102,7 +102,7 @@ class Trainer2:
                     with torch.no_grad():
                         self.model.eval()
                         for m in self.metrics[1:]:
-                            v = m.get_value(pred, y)
+                            v = m.get_value(pred, y, is_train=True)
                             if m.visible:
                                 if isinstance(v, torch.Tensor):
                                     v = v.item()
@@ -131,7 +131,7 @@ class Trainer2:
                 for cb in self.callbacks:
                     cb.on_train_epoch_end(epoch, logs)
                 for m in self.metrics:
-                    m.on_train_epoch_end()
+                    m.on_train_epoch_end(epoch, logs)
 
             # valid loop
             with torch.no_grad():
@@ -141,7 +141,7 @@ class Trainer2:
                 for cb in self.callbacks:
                     cb.on_valid_epoch_begin(epoch)
                 for m in self.metrics:
-                    m.on_valid_epoch_begin()
+                    m.on_valid_epoch_begin(epoch)
 
                 with tqdm(total=len(valid_dl), ncols=self.ncols,
                           desc=self.desc.format(epoch=epoch, num_epochs=num_epochs) + ' Validation') as t:
@@ -152,7 +152,7 @@ class Trainer2:
 
                         # forward
                         pred, y = self.forward(data)
-                        loss = self.metrics[0].get_value(pred, y)
+                        loss = self.metrics[0].get_value(pred, y, is_train=False)
 
                         # metrics
                         losses['val_loss'] = loss.item()
@@ -162,7 +162,7 @@ class Trainer2:
                         with torch.no_grad():
                             self.model.eval()
                             for m in self.metrics[1:]:
-                                v = m.get_value(pred, y)
+                                v = m.get_value(pred, y, is_train=False)
                                 if m.visible:
                                     if isinstance(v, torch.Tensor):
                                         v = v.item()
@@ -195,7 +195,7 @@ class Trainer2:
                             self.stop_loop = True
 
                 for m in self.metrics:
-                    m.on_valid_epoch_end()
+                    m.on_valid_epoch_end(epoch, logs)
 
     def _init_dataset(self,
                       train_dataset: Dataset,
