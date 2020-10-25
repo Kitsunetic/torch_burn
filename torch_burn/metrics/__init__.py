@@ -1,1 +1,1 @@
-from .metrics import Metric, ModuleMetric, InvisibleMetric, CSIMetric
+from .metrics import Metric, ModuleMetric, InvisibleMetric
