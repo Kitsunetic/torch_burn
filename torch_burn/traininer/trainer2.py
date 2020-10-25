@@ -87,7 +87,7 @@ class Trainer2:
 
                     # forward / backward
                     pred, y = self.forward(data)
-                    loss = self.metrics[0].get_value(pred, y, is_train=False)
+                    loss = self.metrics[0].get_value(pred, y, is_train=True)
                     for optim in self.optim:
                         optim.zero_grad()
                     loss.backward()
