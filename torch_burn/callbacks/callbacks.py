@@ -265,7 +265,7 @@ class SaveSample(Callback):
 
             self.save_output(p, self.output_filename.format(epoch=epoch, **logs))
             if self.input_filename is not None:
-                self.save_input(x, self.output_filename.format(epoch=epoch, **logs))
+                self.save_input(x, self.input_filename.format(epoch=epoch, **logs))
             if self.target_filename is not None:
                 self.save_target(y, self.target_filename.format(epoch=epoch, **logs))
 
