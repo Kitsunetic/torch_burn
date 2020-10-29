@@ -56,9 +56,10 @@ class Trainer2:
             start_epoch: int = 1,
             batch_size=32,
             shuffle=True,
+            pin_memory=True,
             drop_last=False):
         train_ds, valid_ds = self._init_dataset(train_dataset, valid_dataset, train_valid_split, num_folds, fold)
-        train_dl, valid_dl = self._init_dataloader(train_ds, valid_ds, batch_size, shuffle, drop_last)
+        train_dl, valid_dl = self._init_dataloader(train_ds, valid_ds, batch_size, shuffle, pin_memory, drop_last)
 
         # logs - average metric value of each epochs
         # losses - metric value of each batches
@@ -233,13 +234,14 @@ class Trainer2:
                          valid_dataset: Dataset = None,
                          batch_size=32,
                          shuffle=True,
+                         pin_memory=True,
                          drop_last=False):
         train_dl = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle,
-                              num_workers=self.cpus, drop_last=drop_last)
+                              num_workers=self.cpus, pin_memory=pin_memory, drop_last=drop_last)
         valid_dl = None
         if valid_dataset is not None:
             valid_dl = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False,
-                                  num_workers=self.cpus, drop_last=drop_last)
+                                  num_workers=self.cpus, pin_memory=pin_memory, drop_last=drop_last)
 
         return train_dl, valid_dl
 
