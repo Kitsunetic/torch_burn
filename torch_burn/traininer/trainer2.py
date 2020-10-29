@@ -100,7 +100,7 @@ class Trainer2:
                     logs['loss'] = _ignition_mean(logs['loss'], loss.item(), batch_idx)
 
                     # Calculate additional losses
-                    pred, y = pred.detach(), y.detach()
+                    # pred, y = pred.detach(), y.detach()
                     with torch.no_grad():
                         self.model.eval()
                         for m in self.metrics[1:]:
@@ -162,7 +162,7 @@ class Trainer2:
                         losses['val_loss'] = loss.item()
                         logs['val_loss'] = _ignition_mean(logs['val_loss'], loss.item(), batch_idx)
 
-                        pred, y = pred.detach(), y.detach()
+                        # pred, y = pred.detach(), y.detach()
                         with torch.no_grad():
                             self.model.eval()
                             for m in self.metrics[1:]:
