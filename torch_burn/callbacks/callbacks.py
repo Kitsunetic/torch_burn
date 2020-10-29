@@ -241,6 +241,7 @@ class SaveSample(Callback):
         super(SaveSample, self).__init__()
 
         save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
         self.output_filename = str(save_dir / output_filename)
         self.input_filename = None
         self.target_filename = None
