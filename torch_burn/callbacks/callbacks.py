@@ -2,8 +2,8 @@ import math
 import random
 from pathlib import Path
 from typing import AnyStr
+from typing import Iterable, List, Union
 from typing import Tuple
-from typing import Union, List, Iterable
 
 import torch
 import torch.nn as nn
@@ -26,6 +26,11 @@ class Callback:
         """Event when train epoch end"""
         pass
 
+    def on_train_epoch_end_with_data(self, epoch: int, logs: dict,
+                                     inputs: torch.Tensor, targets: torch.Tensor, preds: torch.Tensor):
+        """Event when validation epoch end"""
+        pass
+
     def on_valid_epoch_begin(self, epoch: int):
         """Event when validation epoch begin"""
         pass
@@ -34,11 +39,17 @@ class Callback:
         """Event when validation epoch end"""
         pass
 
+    def on_valid_epoch_end_with_data(self, epoch: int, logs: dict,
+                                     inputs: torch.Tensor, targets: torch.Tensor, preds: torch.Tensor):
+        """Event when validation epoch end"""
+        pass
+
     def on_train_batch_begin(self, epoch: int, batch_idx: int):
         """Event when train batch begin"""
         pass
 
-    def on_train_batch_end(self, epoch: int, batch_idx: int, losses: dict):
+    def on_train_batch_end(self, epoch: int, batch_idx: int, losses: dict,
+                           inputs: torch.Tensor, targets: torch.Tensor, preds: torch.Tensor):
         """Event when train batch end"""
         pass
 
@@ -46,7 +57,8 @@ class Callback:
         """Event when validation batch begin"""
         pass
 
-    def on_valid_batch_end(self, epoch: int, batch_idx: int, losses: dict):
+    def on_valid_batch_end(self, epoch: int, batch_idx: int, losses: dict,
+                           inputs: torch.Tensor, targets: torch.Tensor, preds: torch.Tensor):
         """Event when validation batch end"""
         pass
 
@@ -135,130 +147,6 @@ class SaveCheckpoint(MetricImprovingCallback):
         torch.save(data, filepath)
 
 
-class SaveSampleBase(Callback):
-    """
-    Save one sample per a epoch
-    Must be specified how to save sample data through `save_data` overriding function.
-    """
-
-    def __init__(self, model: nn.Module, sample_input: torch.Tensor, save_dir: AnyStr,
-                 filepath: AnyStr = 'sample-epoch{epoch:04d}-val_loss{val_loss:.4f}.png',
-                 sample_input_filename: AnyStr = None,
-                 sample_gt: torch.Tensor = None, sample_gt_filename: AnyStr = None,
-                 cuda=True, verbose=True):
-        """
-
-        :param model: model which already uploaded on GPU if you are tending to use GPU
-        :param sample_input: an input tensor data which could be directly fed into the model
-        :param filepath: adaptive filepath string
-        :param sample_input_filename: if not None and save_input is overloaded, write sample_input as a file
-        :param sample_gt: if sample_gt and sample_gt_filename is not None, write sample ground truth as a file
-        :param sample_gt_filename:
-        :param verbose:
-        """
-        self.model = model
-        self.sample_input = sample_input
-        self.filepath = Path(save_dir) / filepath
-        self.verbose = verbose
-        self.filepath.parent.mkdir(parents=True, exist_ok=True)
-        self.cuda = cuda
-
-        if sample_input_filename:
-            fpath = self.filepath.parent / sample_input_filename
-            print('Write sample input:', fpath)
-            self.save_input(self.sample_input, fpath)
-
-        if sample_gt is not None and sample_gt_filename is not None:
-            fpath = self.filepath.parent / sample_gt_filename
-            print('Write sample gt:', fpath)
-            self.save_gt(sample_gt, fpath)
-
-    def on_valid_epoch_end(self, epoch: int, logs: dict):
-        with torch.no_grad():
-            self.model.eval()
-
-            filepath = str(self.filepath).format(epoch=epoch, **logs)
-            x = self.sample_input.unsqueeze(0)
-            if self.cuda:
-                x = x.cuda()
-            out = self.model(x)
-
-            if self.verbose:
-                print('Write sample', Path(filepath).name)
-            self.save_data(out, filepath)
-
-    def save_input(self, input: torch.Tensor, filepath: str):
-        """Specify how to save input data"""
-        pass
-
-    def save_data(self, output: torch.Tensor, filepath: str):
-        """Specify how to save output data"""
-        raise NotImplementedError('SaveSampleBase is abstract class which must be inherited')
-
-    def save_gt(self, gt: torch.Tensor, filepath: str):
-        """Specify how to save ground truth data"""
-        pass
-
-
-class SaveSampleBase2(Callback):
-    def __init__(self,
-                 model: nn.Module,
-                 ds: Dataset,
-                 save_dir: AnyStr,
-                 output_ext: str,
-                 input_ext: str = '',
-                 filename: AnyStr = 'sample-epoch{epoch:04d}-val_loss{val_loss:.4f}',
-                 gpus=-1,
-                 verbose=True):
-        super(SaveSampleBase2, self).__init__()
-
-        self.model = model
-        self.save_dir = Path(save_dir)
-        self.save_dir.mkdir(parents=True, exist_ok=True)
-        self.input_ext = input_ext
-        self.output_ext = output_ext
-        self.filename = filename + self.output_ext
-        self.gpus = gpus
-        self.verbose = verbose
-
-        sample = ds[random.randint(0, len(ds) - 1)]
-        x, y = self.data_preprocessing(sample)
-        self.x = x
-
-        # Save input x, y
-        xpath = self.save_dir / ('sample-x' + self.input_ext)
-        ypath = self.save_dir / ('sample-y' + self.output_ext)
-        self.save_x(x, xpath)
-        self.save_y(y, ypath)
-
-    def data_preprocessing(self, data) -> Tuple[torch.Tensor, torch.Tensor]:
-        return data[:2]
-
-    def save_x(self, x, path: str):
-        pass
-
-    def save_y(self, y, path: str):
-        pass
-
-    def save_out(self, out, path: str):
-        pass
-
-    def on_valid_epoch_end(self, epoch: int, logs: dict):
-        p = self.save_dir / self.filename.format(epoch=epoch, **logs)
-        if self.verbose:
-            print('Write sample', p.name)
-
-        with torch.no_grad():
-            self.model.eval()
-
-            x = self.x.unsqueeze(0)
-            if self.gpus > 0:
-                x = x.cuda()
-
-            y = self.model(x)
-            self.save_out(y, str(p))
-
-
 class EarlyStopping(MetricImprovingCallback):
     priority = 1
     stopped = False
@@ -341,3 +229,48 @@ class Tensorboard(Callback):
     def on_batch_end(self, epoch: int, losses: dict, logs: dict):
         for k, v in losses.items():
             self.writer.add_scalar(k, v, epoch)
+
+
+class SaveSample(Callback):
+    def __init__(self,
+                 save_dir: AnyStr,
+                 output_filename: AnyStr = 'sample-epoch{epoch:04d}-val_loss{val_loss:.4f}.png',
+                 input_filename: AnyStr = None,
+                 target_filename: AnyStr = None,
+                 verbose=True):
+        super(SaveSample, self).__init__()
+
+        save_dir = Path(save_dir)
+        self.output_filename = str(save_dir / output_filename)
+        self.input_filename = None
+        self.target_filename = None
+        self.verbose = verbose
+
+        if input_filename is not None:
+            self.input_filename = str(save_dir / input_filename)
+        if target_filename is not None:
+            self.target_filename = str(save_dir / target_filename)
+
+        self.is_first_epoch = False
+
+    def on_valid_epoch_end_with_data(self, epoch: int, logs: dict,
+                                     inputs: torch.Tensor, targets: torch.Tensor, preds: torch.Tensor):
+        x = inputs[0].detach().cpu()
+        y = targets[0].detach().cpu()
+        p = preds[0].detach().cpu()
+
+        self.save_output(p, self.output_filename.format(epoch=epoch, **logs))
+        if self.is_first_epoch:
+            if self.input_filename is not None:
+                self.save_input(x, self.output_filename.format(epoch=epoch, **logs))
+            if self.target_filename is not None:
+                self.save_target(y, self.target_filename.format(epoch=epoch, **logs))
+
+    def save_output(self, data: torch.Tensor, path: str):
+        raise NotImplementedError()
+
+    def save_input(self, data: torch.Tensor, path: str):
+        raise NotImplementedError()
+
+    def save_target(self, data: torch.Tensor, path: str):
+        raise NotImplementedError()
