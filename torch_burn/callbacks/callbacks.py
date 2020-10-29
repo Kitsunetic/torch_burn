@@ -251,7 +251,7 @@ class SaveSample(Callback):
         if target_filename is not None:
             self.target_filename = str(save_dir / target_filename)
 
-        self.is_first_epoch = False
+        self.last_epoch = -1
 
     def on_valid_epoch_end_with_data(self, epoch: int, logs: dict,
                                      inputs: torch.Tensor, targets: torch.Tensor, preds: torch.Tensor):
@@ -259,8 +259,10 @@ class SaveSample(Callback):
         y = targets[0].detach().cpu()
         p = preds[0].detach().cpu()
 
-        self.save_output(p, self.output_filename.format(epoch=epoch, **logs))
-        if self.is_first_epoch:
+        if self.last_epoch != epoch: # Is it first callback of the epoch
+            self.last_epoch = epoch
+
+            self.save_output(p, self.output_filename.format(epoch=epoch, **logs))
             if self.input_filename is not None:
                 self.save_input(x, self.output_filename.format(epoch=epoch, **logs))
             if self.target_filename is not None:
