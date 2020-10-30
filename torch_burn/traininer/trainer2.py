@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
 
 from torch_burn.callbacks import Callback, EarlyStopping
-from torch_burn.datasets.utils import kfold
+from torch_burn.data.utils import kfold
 from torch_burn.metrics import Metric
 
 
