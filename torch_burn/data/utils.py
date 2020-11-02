@@ -21,6 +21,8 @@ def kfold(ds: Dataset, k: int, fold: int) -> Tuple[Dataset, Dataset]:
     assert k > 1
     assert len(ds) >= k
 
+    print('Warning: KFold: This function is not recommended for biased data because it has no random nature.')
+
     idx1, idx2 = [], []
     for i in range(len(ds)):
         if i % k == fold:
