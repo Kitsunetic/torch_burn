@@ -1,7 +1,7 @@
 import math
 import time
 from multiprocessing import cpu_count
-from typing import List, Union, Iterable
+from typing import Iterable, List, Union
 
 import torch
 import torch.nn as nn
@@ -55,11 +55,17 @@ class Trainer2:
             num_epochs: int = 1,
             start_epoch: int = 1,
             batch_size=32,
+            valid_batch_size=None,
             shuffle=True,
-            pin_memory=True,
+            pin_memory=False,
             drop_last=False):
+        valid_batch_size = valid_batch_size or batch_size  # `valid batch size` follows `train batch size` if None
+
         train_ds, valid_ds = self._init_dataset(train_dataset, valid_dataset, train_valid_split, num_folds, fold)
-        train_dl, valid_dl = self._init_dataloader(train_ds, valid_ds, batch_size, shuffle, pin_memory, drop_last)
+        train_dl, valid_dl = self._init_dataloader(train_ds, valid_ds,
+                                                   batch_size, valid_batch_size,
+                                                   shuffle, valid_shuffle=False,
+                                                   pin_memory=pin_memory, drop_last=drop_last)
 
         # logs - average metric value of each epochs
         # losses - metric value of each batches
@@ -139,6 +145,10 @@ class Trainer2:
                     cb.on_train_epoch_end_with_data(epoch, logs, x, y, pred)
                 for m in self.metrics:
                     m.on_train_epoch_end(epoch, logs)
+
+            # Without valid dataset, there is no valid loop.
+            if valid_ds is None:
+                continue
 
             # valid loop
             with torch.no_grad():
@@ -233,14 +243,16 @@ class Trainer2:
                          train_dataset: Dataset,
                          valid_dataset: Dataset = None,
                          batch_size=32,
+                         valid_batch_size=None,
                          shuffle=True,
+                         valid_shuffle=False,
                          pin_memory=True,
                          drop_last=False):
         train_dl = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle,
                               num_workers=self.cpus, pin_memory=pin_memory, drop_last=drop_last)
         valid_dl = None
         if valid_dataset is not None:
-            valid_dl = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False,
+            valid_dl = DataLoader(valid_dataset, batch_size=valid_batch_size, shuffle=valid_shuffle,
                                   num_workers=self.cpus, pin_memory=pin_memory, drop_last=drop_last)
 
         return train_dl, valid_dl
