@@ -1,4 +1,5 @@
-from typing import Tuple
+from typing import Tuple, AnyStr
+from pathlib import Path
 
 from torch.utils.data import Dataset, Subset
 
@@ -20,6 +21,8 @@ def kfold(ds: Dataset, k: int, fold: int) -> Tuple[Dataset, Dataset]:
     assert k > 1
     assert len(ds) >= k
 
+    print('Warning: KFold: This function is not recommended for biased data because it has no random nature.')
+
     idx1, idx2 = [], []
     for i in range(len(ds)):
         if i % k == fold:
@@ -33,11 +36,11 @@ def kfold(ds: Dataset, k: int, fold: int) -> Tuple[Dataset, Dataset]:
 class ChainDataset(Dataset):
     def __init__(self, *ds_list: Dataset):
         """
-        데이터셋 여러개를 하나의 데이터셋으로 합칩니다.
-        데이터셋 순서는 ds_list의 순서로 이뤄집니다.
+        Combine multiple dataset into one.
+
         Parameters
         ----------
-        ds_list :
+        ds_list: list of datasets
         """
         self.ds_list = ds_list
         self.len_list = [len(ds) for ds in self.ds_list]

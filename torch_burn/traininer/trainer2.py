@@ -1,7 +1,7 @@
 import math
 import time
 from multiprocessing import cpu_count
-from typing import List, Union, Iterable
+from typing import Iterable, List, Union
 
 import torch
 import torch.nn as nn
@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
 
 from torch_burn.callbacks import Callback, EarlyStopping
-from torch_burn.datasets.utils import kfold
+from torch_burn.data.utils import kfold
 from torch_burn.metrics import Metric
 
 
@@ -55,10 +55,17 @@ class Trainer2:
             num_epochs: int = 1,
             start_epoch: int = 1,
             batch_size=32,
+            valid_batch_size=None,
             shuffle=True,
+            pin_memory=False,
             drop_last=False):
+        valid_batch_size = valid_batch_size or batch_size  # `valid batch size` follows `train batch size` if None
+
         train_ds, valid_ds = self._init_dataset(train_dataset, valid_dataset, train_valid_split, num_folds, fold)
-        train_dl, valid_dl = self._init_dataloader(train_ds, valid_ds, batch_size, shuffle, drop_last)
+        train_dl, valid_dl = self._init_dataloader(train_ds, valid_ds,
+                                                   batch_size, valid_batch_size,
+                                                   shuffle, valid_shuffle=False,
+                                                   pin_memory=pin_memory, drop_last=drop_last)
 
         # logs - average metric value of each epochs
         # losses - metric value of each batches
@@ -70,13 +77,13 @@ class Trainer2:
 
             # train callbacks
             with torch.no_grad():
+                self.model.eval()
                 for cb in self.callbacks:
                     cb.on_train_epoch_begin(epoch)
                 for m in self.metrics:
                     m.on_train_epoch_begin(epoch)
 
             # train loop
-            self.model.train()
             with tqdm(total=len(train_dl), ncols=self.ncols,
                       desc=self.desc.format(epoch=epoch, num_epochs=num_epochs) + ' Train') as t:
                 for batch_idx, data in enumerate(train_dl):
@@ -84,9 +91,10 @@ class Trainer2:
                     with torch.no_grad():
                         for cb in self.callbacks:
                             cb.on_train_batch_begin(epoch, batch_idx)
+                        self.model.train()
 
                     # forward / backward
-                    pred, y = self.forward(data)
+                    x, pred, y = self.forward(data)
                     loss = self.metrics[0].get_value(pred, y, is_train=True)
                     for optim in self.optim:
                         optim.zero_grad()
@@ -99,7 +107,7 @@ class Trainer2:
                     logs['loss'] = _ignition_mean(logs['loss'], loss.item(), batch_idx)
 
                     # Calculate additional losses
-                    pred, y = pred.detach(), y.detach()
+                    # pred, y = pred.detach(), y.detach()
                     with torch.no_grad():
                         self.model.eval()
                         for m in self.metrics[1:]:
@@ -122,23 +130,28 @@ class Trainer2:
 
                     # train batch callbacks
                     with torch.no_grad():
+                        self.model.eval()
                         for cb in self.callbacks:
-                            cb.on_train_batch_end(epoch, batch_idx, losses)
+                            cb.on_train_batch_end(epoch, batch_idx, losses, x, y, pred)
 
             # wait for tqdm closed
             time.sleep(0.01)
 
             # train epoch callbacks
             with torch.no_grad():
+                self.model.eval()
                 for cb in self.callbacks:
                     cb.on_train_epoch_end(epoch, logs)
+                    cb.on_train_epoch_end_with_data(epoch, logs, x, y, pred)
                 for m in self.metrics:
                     m.on_train_epoch_end(epoch, logs)
 
+            # Without valid dataset, there is no valid loop.
+            if valid_ds is None:
+                continue
+
             # valid loop
             with torch.no_grad():
-                self.model.eval()
-
                 # valid callbacks
                 for cb in self.callbacks:
                     cb.on_valid_epoch_begin(epoch)
@@ -153,14 +166,14 @@ class Trainer2:
                             cb.on_valid_batch_begin(epoch, batch_idx)
 
                         # forward
-                        pred, y = self.forward(data)
+                        x, pred, y = self.forward(data)
                         loss = self.metrics[0].get_value(pred, y, is_train=False)
 
                         # metrics
                         losses['val_loss'] = loss.item()
                         logs['val_loss'] = _ignition_mean(logs['val_loss'], loss.item(), batch_idx)
 
-                        pred, y = pred.detach(), y.detach()
+                        # pred, y = pred.detach(), y.detach()
                         with torch.no_grad():
                             self.model.eval()
                             for m in self.metrics[1:]:
@@ -184,7 +197,7 @@ class Trainer2:
 
                         # train batch callbacks
                         for cb in self.callbacks:
-                            cb.on_valid_batch_end(epoch, batch_idx, losses)
+                            cb.on_valid_batch_end(epoch, batch_idx, losses, x, y, pred)
 
                 # Wait for tqdm closed
                 time.sleep(0.01)
@@ -192,12 +205,16 @@ class Trainer2:
                 # Validation epoch callbacks
                 for cb in self.callbacks:
                     cb.on_valid_epoch_end(epoch, logs)
+                    cb.on_valid_epoch_end_with_data(epoch, logs, x, y, pred)
                     if isinstance(cb, EarlyStopping):
                         if cb.stopped:
                             self.stop_loop = True
 
                 for m in self.metrics:
                     m.on_valid_epoch_end(epoch, logs)
+
+        # Ends up with train mode
+        self.model.train()
 
     def _init_dataset(self,
                       train_dataset: Dataset,
@@ -226,14 +243,17 @@ class Trainer2:
                          train_dataset: Dataset,
                          valid_dataset: Dataset = None,
                          batch_size=32,
+                         valid_batch_size=None,
                          shuffle=True,
+                         valid_shuffle=False,
+                         pin_memory=True,
                          drop_last=False):
         train_dl = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle,
-                              num_workers=self.cpus, drop_last=drop_last)
+                              num_workers=self.cpus, pin_memory=pin_memory, drop_last=drop_last)
         valid_dl = None
         if valid_dataset is not None:
-            valid_dl = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False,
-                                  num_workers=self.cpus, drop_last=drop_last)
+            valid_dl = DataLoader(valid_dataset, batch_size=valid_batch_size, shuffle=valid_shuffle,
+                                  num_workers=self.cpus, pin_memory=pin_memory, drop_last=drop_last)
 
         return train_dl, valid_dl
 
@@ -264,7 +284,7 @@ class Trainer2:
         if self.gpus > 0:
             x = x.cuda()
             y = y.cuda()
-        return self.model(x), y
+        return x, self.model(x), y
 
 
 def _ignition_mean(a, b, i):
