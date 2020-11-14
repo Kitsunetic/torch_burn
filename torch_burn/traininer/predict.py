@@ -7,18 +7,8 @@ from tqdm import tqdm
 
 
 class Predictor:
-    def __init__(self,
-                 model: nn.Module,
-                 batch_size=32,
-                 shuffle=False,
-                 drop_last=False,
-                 cpus=cpu_count(),
-                 gpus=torch.cuda.device_count(),
-                 verbose=True):
+    def __init__(self, model: nn.Module, cpus=cpu_count(), gpus=torch.cuda.device_count(), verbose=True):
         self.model = model
-        self.batch_size = batch_size
-        self.shuffle = shuffle
-        self.drop_last = drop_last
         self.cpus = cpus
         self.gpus = gpus
         self.verbose = verbose
@@ -36,26 +26,28 @@ class Predictor:
     def on_predict_end(self):
         pass
 
-    def predict(self, dataset: Dataset):
+    def predict(self, dataset: Dataset, batch_size=16, shuffle=False,
+                verbose=None, desc='Prediction', ncols=100):
+        verbose = verbose or self.verbose
+
         self.on_predict_begin()
 
-        dl = DataLoader(dataset, batch_size=self.batch_size, shuffle=self.shuffle,
-                        num_workers=self.cpus, drop_last=self.drop_last)
+        dl = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.cpus)
 
         t = None
-        if self.verbose:
-            t = tqdm(total=len(dl), ncols=100, desc='Prediction')
+        if verbose:
+            t = tqdm(total=len(dl), ncols=ncols, desc=desc)
 
         rets = []
         for data in dl:
             ret = self.forward(data)
             rets.append(ret)
 
-            if self.verbose:
+            if verbose:
                 t.update()
         ret = torch.cat(rets)
 
-        if self.verbose:
+        if verbose:
             t.close()
 
         self.on_predict_end()
