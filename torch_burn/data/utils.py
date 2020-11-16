@@ -48,11 +48,11 @@ class ChainDataset(Dataset):
 
         self.idx_list = []
         for i, l in enumerate(self.len_list):
-            self.idx_list.extend([i for _ in range(l)])
+            self.idx_list.extend([(i, j) for j in range(l)])
 
     def __len__(self):
         return self.total_len
 
     def __getitem__(self, idx):
-        didx = self.idx_list[idx]
-        return self.ds_list[didx][idx]
+        didx, sidx = self.idx_list[idx]
+        return self.ds_list[didx][sidx]
