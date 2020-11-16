@@ -58,10 +58,11 @@ class Trainer2:
             valid_batch_size=None,
             shuffle=True,
             pin_memory=False,
-            drop_last=False):
+            drop_last=False,
+            seed=0):
         valid_batch_size = valid_batch_size or batch_size  # `valid batch size` follows `train batch size` if None
 
-        train_ds, valid_ds = self._init_dataset(train_dataset, valid_dataset, train_valid_split, num_folds, fold)
+        train_ds, valid_ds = self._init_dataset(train_dataset, valid_dataset, train_valid_split, num_folds, fold, seed)
         train_dl, valid_dl = self._init_dataloader(train_ds, valid_ds,
                                                    batch_size, valid_batch_size,
                                                    shuffle, valid_shuffle=False,
@@ -221,7 +222,8 @@ class Trainer2:
                       valid_dataset: Dataset = None,
                       train_valid_split: float = None,
                       num_folds: int = None,
-                      fold: int = None):
+                      fold: int = None,
+                      seed: int = 0):
         if valid_dataset is not None:
             return train_dataset, valid_dataset
         elif (train_valid_split is not None) and (0 < train_valid_split < 1):
@@ -232,7 +234,7 @@ class Trainer2:
             return random_split(train_dataset, (t, v))
         elif num_folds is not None and fold is not None:
             # k-fold
-            return kfold(train_dataset, num_folds, fold)
+            return kfold(train_dataset, num_folds, fold, seed)
         elif num_folds is not None or fold is not None:
             raise NotImplementedError('Both num_folds and fold must be specified')
         else:
