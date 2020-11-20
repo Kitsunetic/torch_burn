@@ -1,3 +1,4 @@
+import time
 from multiprocessing import cpu_count
 
 import torch
@@ -49,6 +50,7 @@ class Predictor:
 
         if verbose:
             t.close()
+            time.sleep(0.001)
 
         self.on_predict_end()
         return ret
