@@ -1,10 +1,12 @@
-from typing import Tuple, AnyStr
-from pathlib import Path
+from typing import Tuple
 
+import numpy as np
 from torch.utils.data import Dataset, Subset
 
+from torch_burn.utils import seed_everything
 
-def kfold(ds: Dataset, k: int, fold: int) -> Tuple[Dataset, Dataset]:
+
+def kfold(ds: Dataset, k: int, fold: int, seed: int) -> Tuple[Dataset, Dataset]:
     """
     데이터셋을 k개로 잘라서 많은 쪽을 train, 작은 쪽을 test 데이터셋으로 분할합니다.
     Parameters
@@ -17,20 +19,25 @@ def kfold(ds: Dataset, k: int, fold: int) -> Tuple[Dataset, Dataset]:
     -------
     나눠진 두 개의 train, test 데이터셋
     """
+    L = len(ds)
+
     assert 0 <= fold < k
     assert k > 1
-    assert len(ds) >= k
+    assert L >= k
 
-    print('Warning: KFold: This function is not recommended for biased data because it has no random nature.')
+    seed_everything(seed)
+    perm = np.random.permutation(L)
+    idxlist = []
+    P = L // k
+    for i in range(k - 1):
+        idxlist.append(perm[P * i:P * (i + 1)])
+    idxlist.append(perm[P * (k - 1):])
 
-    idx1, idx2 = [], []
-    for i in range(len(ds)):
-        if i % k == fold:
-            idx2.append(i)
-        else:
-            idx1.append(i)
+    y = Subset(ds, idxlist[fold])
+    del idxlist[fold]
+    x = Subset(ds, np.concatenate(idxlist))
 
-    return Subset(ds, idx1), Subset(ds, idx2)
+    return x, y
 
 
 class ChainDataset(Dataset):
@@ -48,11 +55,11 @@ class ChainDataset(Dataset):
 
         self.idx_list = []
         for i, l in enumerate(self.len_list):
-            self.idx_list.extend([i for _ in range(l)])
+            self.idx_list.extend([(i, j) for j in range(l)])
 
     def __len__(self):
         return self.total_len
 
     def __getitem__(self, idx):
-        didx = self.idx_list[idx]
-        return self.ds_list[didx][idx]
+        didx, sidx = self.idx_list[idx]
+        return self.ds_list[didx][sidx]
