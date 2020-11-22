@@ -14,7 +14,7 @@ from torch_burn.data.utils import kfold
 from torch_burn.metrics import Metric
 
 
-class Trainer2:
+class Trainer:
     def __init__(self,
                  model: nn.Module,
                  optim: Union[Optimizer, Iterable[Optimizer]],
