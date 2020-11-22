@@ -1,4 +1,5 @@
 import math
+from collections import defaultdict
 import time
 from multiprocessing import cpu_count
 from typing import Iterable, Union, Tuple
@@ -70,13 +71,14 @@ class Trainer:
                                                    pin_memory=pin_memory, drop_last=drop_last)
 
         # logs - average metric value of each epochs
-        # losses - metric value of each batches
-        losses = self._init_train_losses()
         self.stop_loop = False
         for epoch in range(start_epoch, num_epochs + 1):
             if self.stop_loop:
                 break
             logs = self._init_logs()
+
+            # losses - metric value of each batches
+            losses = defaultdict(float)
 
             # train callbacks
             with torch.no_grad():
@@ -108,9 +110,13 @@ class Trainer:
                 # Update progressbar
                 if self.verbose:
                     msgs = []
+                    for k, v in losses.items():
+                        msgs.append(f'{k} {v:.4f}')
+                    """
                     for m in self.metrics:
                         if m.visible:
                             msgs.append(f'{m.name} {logs[m.name]:.4f}')
+                    """
                     msg = ' '.join(msgs)
                     t.set_postfix_str(msg, refresh=False)
                     t.update()
@@ -137,6 +143,7 @@ class Trainer:
                 continue
 
             # valid loop
+            losses = defaultdict(float)
             self.model.eval()
             with torch.no_grad():
                 # valid callbacks
@@ -163,10 +170,14 @@ class Trainer:
                     # Update progressbar
                     if self.verbose:
                         msgs = []
+                        for k, v in losses.items():
+                            msgs.append(f'{k} {v:.4f}')
+                        """
                         for m in self.metrics:
                             if m.visible:
                                 name = 'val_' + m.name
                                 msgs.append(f'{name} {logs[name]:.4f}')
+                        """
                         msg = ' '.join(msgs)
                         t.set_postfix_str(msg, refresh=False)
                         t.update()
@@ -244,20 +255,6 @@ class Trainer:
                 logs[m.name] = math.inf if m.mode == 'min' else -math.inf
                 logs['val_' + m.name] = math.inf if m.mode == 'min' else -math.inf
         return logs
-
-    def _init_train_losses(self):
-        losses = {}
-        for m in self.metrics:
-            if m.visible:
-                losses[m.name] = 0
-        return losses
-
-    def _init_valid_losses(self):
-        losses = {}
-        for m in self.metrics:
-            if m.visible:
-                losses['val_' + m.name] = 0
-        return losses
 
     def forward(self, data, is_train: bool) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         x, y = data[:2]
